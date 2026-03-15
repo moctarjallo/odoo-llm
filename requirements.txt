@@ -2,6 +2,7 @@
 PyMuPDF
 anthropic
 chromadb-client
+claude-agent-sdk
 emoji
 fal_client
 jinja2

@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo noupdate="1">
+
+    <!--
+        Claude Agent — default tool record
+
+        Executes a natural-language prompt via the claude-agent-sdk Python package.
+        Auth: uses ~/.claude subscription credentials (mounted at /root/.claude).
+        No API key required.
+
+        Work folder points at the odoo-llm submodule inside the container so
+        Claude Code has git access and sees all module source files.
+    -->
+    <record id="llm_tool_claude_agent" model="llm.tool">
+        <field name="name">claude_agent</field>
+        <field name="description">
+Execute a natural-language development task using Claude Code (claude-agent-sdk).
+Claude autonomously reads files, runs bash commands, edits code, and searches the
+codebase inside the container.
+
+Pass a clear, detailed prompt describing the task. Claude will work in the configured
+work folder (/workspace/ordomatics/addons/odoo-llm) and return a full report of
+what it did.
+
+Examples:
+  - "List all Python files in the llm_skills module"
+  - "Find all TODO comments in the llm_mcp_server module and summarise them"
+  - "Run the test suite for llm_tool and report failures"
+        </field>
+        <field name="implementation">claude_agent</field>
+        <field name="claude_work_folder">/workspace/ordomatics/addons/odoo-llm</field>
+        <field name="claude_allowed_tools">Read,Edit,MultiEdit,Write,Bash,Glob,Grep,LS</field>
+        <field name="claude_permission_mode">acceptEdits</field>
+        <field name="active" eval="True"/>
+        <field name="read_only_hint" eval="False"/>
+        <field name="destructive_hint" eval="True"/>
+        <field name="idempotent_hint" eval="False"/>
+        <field name="open_world_hint" eval="True"/>
+    </record>
+
+</odoo>
