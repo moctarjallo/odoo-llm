@@ -38,14 +38,14 @@ and executes it with full Claude Code capabilities (file edits, bash, git, searc
 using --dangerously-skip-permissions.
 
 Repo layout inside the container:
-  /workspace/ordomatics  — Ordomatics project root (docker-compose, scripts, .git)
-  /workspace/odoo-llm    — odoo-llm module repo (.git, all modules)
-  /workspace/whatsapp    — whatsapp module repo (.git, all modules)
-  /mnt/odoo-llm          — same as /workspace/odoo-llm (Odoo addons path)
-  /mnt/whatsapp          — same as /workspace/whatsapp (Odoo addons path)
+  /workspace/ordomatics                        — Ordomatics project root (.git, docker-compose, etc.)
+  /workspace/ordomatics/addons/odoo-llm        — odoo-llm submodule (use this for git operations)
+  /workspace/ordomatics/addons/whatsapp        — whatsapp submodule (use this for git operations)
+  /mnt/odoo-llm                                — same data as addons/odoo-llm (Odoo addons path)
+  /mnt/whatsapp                                — same data as addons/whatsapp (Odoo addons path)
 
 Always pass the relevant working directory in your prompt,
-e.g. "Your work folder is /workspace/odoo-llm\n\n..."
+e.g. "Your work folder is /workspace/ordomatics/addons/odoo-llm\n\n..."
         </field>
         <field name="timeout">120</field>
         <field name="active" eval="True"/>

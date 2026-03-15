@@ -9,7 +9,7 @@
         <field name="active" eval="True" />
 
         <!-- Server Mode Configuration -->
-        <field name="mode">stateful</field>
+        <field name="mode">stateless</field>
 
         <!-- External URL left empty for auto-detection from web.base.url -->
         <field name="external_url" />

@@ -182,8 +182,12 @@ class LLMMcpClientServer(models.Model):
         Returns:
             dict mapping req_id -> result for calls that have an id.
             Notifications (no id) are sent but their responses ignored.
+
+        Uses line-by-line reading so that long-running persistent MCP servers
+        (e.g. claude-code-mcp) are not killed before they emit their response.
         """
         self.ensure_one()
+        import time
         cmd = [self.command] + (self.args.split() if self.args else [])
 
         # Build all messages — send as newline-delimited JSON
@@ -213,32 +217,70 @@ class LLMMcpClientServer(models.Model):
             )
 
         try:
-            stdout, stderr = proc.communicate(input=payload, timeout=self.timeout)
-        except subprocess.TimeoutExpired:
-            proc.kill()
-            proc.communicate()
+            # Write all messages at once
+            proc.stdin.write(payload)
+            proc.stdin.flush()
+
+            # Read stdout line by line until we have all expected responses
+            # or timeout expires. Uses a queue + thread to avoid blocking forever
+            # on readline() for persistent servers that don't exit after responding.
+            import queue
+            import threading
+
+            line_queue = queue.Queue()
+
+            def _reader(stdout, q):
+                try:
+                    for line in stdout:
+                        q.put(line)
+                finally:
+                    q.put(None)  # sentinel
+
+            reader_thread = threading.Thread(
+                target=_reader, args=(proc.stdout, line_queue), daemon=True
+            )
+            reader_thread.start()
+
+            results = {}
+            deadline = time.monotonic() + self.timeout
+
+            while ids_with_results - set(results.keys()):
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise UserError(
+                        _("stdio MCP server '%(name)s' timed out after %(t)d seconds.")
+                        % {"name": self.name, "t": self.timeout}
+                    )
+                try:
+                    line = line_queue.get(timeout=min(remaining, 1.0))
+                except queue.Empty:
+                    if proc.poll() is not None:
+                        break
+                    continue
+                if line is None:
+                    break  # EOF sentinel
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    data = json.loads(line)
+                    if "id" in data and data["id"] in ids_with_results:
+                        results[data["id"]] = self._extract_jsonrpc_result(data)
+                except (ValueError, UserError):
+                    continue
+
+        except UserError:
+            raise
+        except Exception as e:
             raise UserError(
-                _("stdio MCP server '%(name)s' timed out after %(t)d seconds.")
-                % {"name": self.name, "t": self.timeout}
+                _("stdio MCP server '%(name)s' error: %(err)s")
+                % {"name": self.name, "err": str(e)}
             )
         finally:
             try:
                 proc.kill()
             except Exception:
                 pass
-
-        # Parse all response lines, collect by id
-        results = {}
-        for line in (stdout or "").splitlines():
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                data = json.loads(line)
-                if "id" in data and data["id"] in ids_with_results:
-                    results[data["id"]] = self._extract_jsonrpc_result(data)
-            except (ValueError, UserError):
-                continue
 
         return results
 
