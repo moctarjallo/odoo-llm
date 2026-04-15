@@ -1,6 +1,10 @@
 import json
 import logging
 import os
+import base64
+from urllib.error import HTTPError, URLError
+from urllib.parse import urlencode
+from urllib.request import Request, urlopen
 
 from odoo import _, api, fields, models
 from odoo.exceptions import UserError
@@ -18,6 +22,25 @@ except ImportError:
 
 class LLMProvider(models.Model):
     _inherit = "llm.provider"
+
+    FAL_TRANSCRIPTION_FIELD_CANDIDATES = (
+        "audio_url",
+        "audio",
+        "file_url",
+        "file",
+        "media_url",
+        "input_audio",
+    )
+
+    FAL_PROMPT_FIELD_CANDIDATES = (
+        "prompt",
+        "initial_prompt",
+    )
+
+    FAL_LANGUAGE_FIELD_CANDIDATES = (
+        "language",
+        "language_code",
+    )
 
     webhook_url = fields.Char(
         string="Webhook URL", help="URL where FAL.AI will send completion notifications"
@@ -49,6 +72,44 @@ class LLMProvider(models.Model):
     def fal_ai_embedding(self, texts, model=None):
         """FAL AI doesn't support embeddings directly"""
         raise UserError(_("FAL AI provider does not support embedding functionality"))
+
+    def fal_ai_transcribe_audio(
+        self,
+        data,
+        filename,
+        mimetype,
+        model=None,
+        prompt=None,
+        language=None,
+        **kwargs,
+    ):
+        """Transcribe audio with a Fal.ai transcription model."""
+        self.ensure_one()
+        client = self.fal_ai_get_client()
+
+        model = self.get_model(model, "transcription")
+        inputs = self._fal_ai_build_transcription_inputs(
+            model=model,
+            data=data,
+            filename=filename,
+            mimetype=mimetype,
+            prompt=prompt,
+            language=language,
+        )
+
+        try:
+            result = client.run(model.name, arguments=inputs)
+        except Exception as e:
+            _logger.error(f"Error in FAL AI transcription: {e}")
+            raise UserError(_(f"FAL AI transcription failed: {str(e)}")) from e
+
+        parsed = self._fal_ai_parse_transcription_output(result)
+        return {
+            "text": parsed.get("text", ""),
+            "language": parsed.get("language"),
+            "duration": parsed.get("duration"),
+            "model": model.name,
+        }
 
     def fal_ai_generate(self, input_data, model=None, stream=False, **kwargs):
         """Generate content using FAL AI
@@ -143,115 +204,228 @@ class LLMProvider(models.Model):
             raise UserError(_(f"FAL AI streaming failed: {str(e)}")) from e
 
     def fal_ai_models(self, model_id=None):
-        """Retrieves the list of available models on fal.ai."""
-        # Currently, fal.ai does not provide an endpoint to list models
-        # Hardcoded known models with details including schemas
-        models = [
-            {
-                "id": "fal-ai/flux/dev",
-                "name": "fal-ai/flux/dev",
-                "description": "FLUX.1 [dev] - High-quality image generation model",
-                "capabilities": ["image_generation"],
-                "details": {
-                    "input_schema": {
-                        "type": "object",
-                        "properties": {
-                            "prompt": {
-                                "type": "string",
-                                "description": "Description of the image to generate",
-                                "title": "Prompt",
-                            },
-                            "negative_prompt": {
-                                "type": "string",
-                                "description": "Elements to avoid in the generated image",
-                                "title": "Negative Prompt",
-                                "default": "",
-                            },
-                            "image_size": {
-                                "type": "string",
-                                "description": "Size of the generated image",
-                                "enum": [
-                                    "square",
-                                    "portrait",
-                                    "landscape",
-                                    "landscape_16_9",
-                                    "landscape_4_3",
-                                ],
-                                "default": "square",
-                                "title": "Image Size",
-                            },
-                            "num_images": {
-                                "type": "integer",
-                                "description": "Number of images to generate",
-                                "minimum": 1,
-                                "maximum": 4,
-                                "default": 1,
-                                "title": "Image Quantity",
-                            },
-                            "seed": {
-                                "type": "integer",
-                                "description": "Seed for reproducibility",
-                                "default": 42,
-                                "title": "Seed",
-                            },
-                        },
-                        "required": ["prompt"],
-                    },
-                    "output_schema": {
-                        "type": "array",
-                        "items": {"type": "string", "format": "uri"},
-                        "title": "Generated Images",
-                    },
-                },
-            },
-            {
-                "id": "fal-ai/lcm",
-                "name": "fal-ai/lcm",
-                "description": "Latent Consistency Model - Fast image generation",
-                "capabilities": ["image_generation"],
-                "details": {
-                    "input_schema": {
-                        "type": "object",
-                        "properties": {
-                            "prompt": {
-                                "type": "string",
-                                "description": "Description of the image to generate",
-                                "title": "Prompt",
-                            },
-                            "negative_prompt": {
-                                "type": "string",
-                                "description": "Elements to avoid in the generated image",
-                                "title": "Negative Prompt",
-                                "default": "",
-                            },
-                            "image_size": {
-                                "type": "string",
-                                "description": "Size of the generated image",
-                                "enum": ["square", "portrait", "landscape"],
-                                "default": "square",
-                                "title": "Image Size",
-                            },
-                            "num_inference_steps": {
-                                "type": "integer",
-                                "description": "Number of inference steps",
-                                "minimum": 1,
-                                "maximum": 8,
-                                "default": 4,
-                                "title": "Inference Steps",
-                            },
-                        },
-                        "required": ["prompt"],
-                    },
-                    "output_schema": {
-                        "type": "array",
-                        "items": {"type": "string", "format": "uri"},
-                        "title": "Generated Images",
-                    },
-                },
-            },
-        ]
+        """Retrieve available Fal model endpoints from the platform API."""
+        self.ensure_one()
 
-        return models
+        for raw_model in self._fal_ai_fetch_models(model_id=model_id):
+            parsed = self._fal_ai_parse_model(raw_model)
+            if parsed:
+                yield parsed
+
+    def _fal_ai_fetch_models(self, model_id=None):
+        """Fetch Fal model metadata from the platform API."""
+        base_url = (self.api_base or "https://api.fal.ai/v1").rstrip("/")
+        models_url = base_url if base_url.endswith("/models") else f"{base_url}/models"
+
+        params = [("status", "active")]
+        if model_id:
+            params.append(("endpoint_id", model_id))
+        else:
+            params.append(("limit", "10"))
+        params.append(("expand", "openapi-3.0"))
+
+        cursor = None
+        while True:
+            current_params = list(params)
+            if cursor:
+                current_params.append(("cursor", cursor))
+
+            url = f"{models_url}?{urlencode(current_params, doseq=True)}"
+            request = Request(
+                url,
+                headers={
+                    "Authorization": f"Key {self.api_key}",
+                    "Accept": "application/json",
+                },
+            )
+
+            try:
+                with urlopen(request, timeout=30) as response:
+                    payload = json.loads(response.read().decode("utf-8"))
+            except HTTPError as e:
+                body = e.read().decode("utf-8", errors="ignore")
+                raise UserError(
+                    _(
+                        "Fal.ai model fetch failed with HTTP %s: %s",
+                    )
+                    % (e.code, body or e.reason)
+                ) from e
+            except URLError as e:
+                raise UserError(
+                    _("Fal.ai model fetch failed: %s") % (e.reason or str(e))
+                ) from e
+
+            for raw_model in payload.get("models", []):
+                yield raw_model
+
+            if model_id:
+                break
+
+            cursor = payload.get("next_cursor")
+            if not cursor or not payload.get("has_more"):
+                break
+
+    def _fal_ai_parse_model(self, raw_model):
+        """Normalize a Fal platform model record into the Odoo import format."""
+        endpoint_id = raw_model.get("endpoint_id")
+        if not endpoint_id:
+            return None
+
+        metadata = raw_model.get("metadata") or {}
+        category = (metadata.get("category") or "").lower()
+        capabilities = self._fal_ai_capabilities_from_category(category, endpoint_id)
+
+        details = self.serialize_model_data(raw_model)
+        details["capabilities"] = capabilities
+        details["category"] = category
+        details["description"] = metadata.get("description", "")
+
+        openapi_schema = raw_model.get("openapi")
+        if openapi_schema:
+            input_schema = (
+                openapi_schema.get("components", {})
+                .get("schemas", {})
+                .get("Input")
+            )
+            output_schema = (
+                openapi_schema.get("components", {})
+                .get("schemas", {})
+                .get("Output")
+            )
+            if input_schema:
+                details["input_schema"] = input_schema
+            if output_schema:
+                details["output_schema"] = output_schema
+
+        return {
+            "id": endpoint_id,
+            "name": endpoint_id,
+            "details": details,
+        }
+
+    def fal_ai_should_generate_transcription_schema(self, model_record):
+        return False
+
+    def fal_ai_generate_transcription_schema(self, model_record):
+        return model_record.details
+
+    def _fal_ai_capabilities_from_category(self, category, endpoint_id):
+        """Map Fal model categories to Odoo provider capabilities."""
+        name = endpoint_id.lower()
+
+        if any(
+            token in category
+            for token in ["speech-to-text", "speech_to_text", "transcription", "stt"]
+        ):
+            return ["transcription"]
+
+        if any(token in name for token in ["transcribe", "transcription", "whisper", "stt"]):
+            return ["transcription"]
+
+        if any(token in category for token in ["image", "inpaint", "upscale"]):
+            return ["image_generation"]
+
+        if any(
+            token in category
+            for token in ["video", "audio", "music", "speech", "3d", "training"]
+        ):
+            return ["generation"]
+
+        if any(token in name for token in ["image", "flux", "lcm"]):
+            return ["image_generation"]
+
+        if any(token in name for token in ["video", "audio", "music", "speech", "3d"]):
+            return ["generation"]
+
+        return ["generation"]
+
+    def _fal_ai_build_transcription_inputs(
+        self,
+        model,
+        data,
+        filename,
+        mimetype,
+        prompt=None,
+        language=None,
+    ):
+        schema = ((model.details or {}).get("input_schema") or {}).get("properties", {})
+        inputs = {}
+        data_uri = f"data:{mimetype or 'application/octet-stream'};base64,{base64.b64encode(data).decode()}"
+
+        for field_name in self.FAL_TRANSCRIPTION_FIELD_CANDIDATES:
+            if field_name in schema:
+                inputs[field_name] = data_uri
+                break
+        else:
+            inputs["audio_url"] = data_uri
+
+        if "filename" in schema:
+            inputs["filename"] = filename
+        elif "file_name" in schema:
+            inputs["file_name"] = filename
+
+        if prompt:
+            for field_name in self.FAL_PROMPT_FIELD_CANDIDATES:
+                if field_name in schema:
+                    inputs[field_name] = prompt
+                    break
+            else:
+                inputs["prompt"] = prompt
+
+        if language:
+            for field_name in self.FAL_LANGUAGE_FIELD_CANDIDATES:
+                if field_name in schema:
+                    inputs[field_name] = language
+                    break
+            else:
+                inputs["language"] = language
+
+        return inputs
+
+    def _fal_ai_parse_transcription_output(self, result):
+        if isinstance(result, str):
+            return {"text": result, "language": None, "duration": None}
+
+        if isinstance(result, list):
+            if len(result) == 1:
+                return self._fal_ai_parse_transcription_output(result[0])
+            return {
+                "text": "\n".join(str(item) for item in result if item is not None),
+                "language": None,
+                "duration": None,
+            }
+
+        if isinstance(result, dict):
+            text = self._fal_ai_extract_transcription_text(result)
+            return {
+                "text": text or "",
+                "language": result.get("language") or result.get("detected_language"),
+                "duration": result.get("duration") or result.get("audio_duration"),
+            }
+
+        return {"text": str(result), "language": None, "duration": None}
+
+    def _fal_ai_extract_transcription_text(self, payload):
+        for key in (
+            "text",
+            "transcript",
+            "transcription",
+            "output",
+            "result",
+            "prediction",
+        ):
+            value = payload.get(key)
+            if isinstance(value, str):
+                return value
+            if isinstance(value, dict):
+                nested = self._fal_ai_extract_transcription_text(value)
+                if nested:
+                    return nested
+            if isinstance(value, list):
+                parts = [str(item) for item in value if isinstance(item, (str, int, float))]
+                if parts:
+                    return "\n".join(parts)
+        return ""
 
     def fal_ai_format_generation_response(self, raw_response, output_schema):
         """Format the raw generation response according to the output processing config
@@ -340,7 +514,7 @@ class LLMProvider(models.Model):
                 )
                 return urls
 
-            # If not training output, check for standard image generation patterns
+            # If not training output, check for standard media generation patterns
             elif "images" in result:
                 _logger.info(
                     "FAL.AI URL EXTRACTION - Processing standard image generation with 'images' key"
@@ -353,6 +527,22 @@ class LLMProvider(models.Model):
                         _logger.info(
                             f"FAL.AI URL EXTRACTION - Image {i+1} extracted: {json.dumps(url_data, indent=2)}"
                         )
+            elif any(key in result for key in ("image", "audio", "video")):
+                media_keys = [key for key in ("image", "audio", "video") if key in result]
+                _logger.info(
+                    f"FAL.AI URL EXTRACTION - Processing media container keys: {media_keys}"
+                )
+                for key in media_keys:
+                    value = result[key]
+                    items = value if isinstance(value, list) else [value]
+                    for i, item in enumerate(items):
+                        url_data = self._fal_ai_extract_single_url_with_metadata(item)
+                        if url_data:
+                            url_data.setdefault("filename", f"{key}_{i + 1}")
+                            urls.append(url_data)
+                            _logger.info(
+                                f"FAL.AI URL EXTRACTION - {key} {i+1} extracted: {json.dumps(url_data, indent=2)}"
+                            )
             else:
                 _logger.info(
                     "FAL.AI URL EXTRACTION - No 'images' key found, checking for other URL fields"
