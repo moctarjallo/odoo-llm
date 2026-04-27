@@ -252,22 +252,12 @@ class LLMProvider(models.Model):
             ]
         else:
             model_to_fetch = self._context.get("default_model_to_fetch")
-            try:
-                if model_to_fetch:
-                    models_data = list(self.list_models(model_id=model_to_fetch))
-                else:
-                    models_data = list(self.list_models())
-                # Record successful fetch time (sudo to avoid write-access issues).
-                self.sudo().models_fetched_at = fields.Datetime.now()
-            except Exception:
-                if not existing_models:
-                    raise
-                # API failed but we have existing models — serve them and let the
-                # user retry later (models_fetched_at stays unset so next call retries).
-                models_data = [
-                    {"name": m.name, "details": m.details or {}}
-                    for m in existing_models.values()
-                ]
+            if model_to_fetch:
+                models_data = self.list_models(model_id=model_to_fetch)
+            else:
+                models_data = self.list_models()
+            # Record successful fetch time (sudo to avoid write-access issues).
+            self.sudo().models_fetched_at = fields.Datetime.now()
 
         # Track models to prevent duplicates
         wizard_models = set()
