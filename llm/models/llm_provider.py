@@ -1,7 +1,9 @@
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from odoo import _, api, fields, models
 from odoo.exceptions import UserError, ValidationError
+
+_MODELS_CACHE_TTL_HOURS = 24
 
 
 class LLMProvider(models.Model):
@@ -24,6 +26,12 @@ class LLMProvider(models.Model):
     api_key = fields.Char()
     api_base = fields.Char()
     model_ids = fields.One2many("llm.model", "provider_id", string="Models")
+    models_fetched_at = fields.Datetime(
+        string="Models Last Fetched",
+        readonly=True,
+        copy=False,
+        help="Timestamp of the last successful model list fetch from the provider API.",
+    )
 
     @api.constrains("name")
     def _check_unique_name(self):
@@ -203,7 +211,12 @@ class LLMProvider(models.Model):
         return self._dispatch("models", model_id=model_id)
 
     def action_fetch_models(self):
-        """Fetch models from provider and open import wizard"""
+        """Fetch models from provider and open import wizard.
+
+        Skips the remote API call if the model list was successfully fetched within
+        the last _MODELS_CACHE_TTL_HOURS hours and serves the wizard from the existing
+        llm.model records instead. Pass context key force_refresh_models=True to bypass.
+        """
         self.ensure_one()
 
         # Create wizard first so it has an ID
@@ -219,12 +232,32 @@ class LLMProvider(models.Model):
             for model in self.env["llm.model"].search([("provider_id", "=", self.id)])
         }
 
-        # Fetch models from provider
-        model_to_fetch = self._context.get("default_model_to_fetch")
-        if model_to_fetch:
-            models_data = self.list_models(model_id=model_to_fetch)
+        # Determine whether to use the cached model list or call the API.
+        ttl_hours = int(
+            self.env["ir.config_parameter"]
+            .sudo()
+            .get_param("llm.models_cache_ttl_hours", _MODELS_CACHE_TTL_HOURS)
+        )
+        force = self._context.get("force_refresh_models", False)
+        cache_valid = (
+            not force
+            and self.models_fetched_at
+            and fields.Datetime.now() - self.models_fetched_at < timedelta(hours=ttl_hours)
+        )
+
+        if cache_valid:
+            models_data = [
+                {"name": m.name, "details": m.details or {}}
+                for m in existing_models.values()
+            ]
         else:
-            models_data = self.list_models()
+            model_to_fetch = self._context.get("default_model_to_fetch")
+            if model_to_fetch:
+                models_data = self.list_models(model_id=model_to_fetch)
+            else:
+                models_data = self.list_models()
+            # Record successful fetch time (sudo to avoid write-access issues).
+            self.sudo().models_fetched_at = fields.Datetime.now()
 
         # Track models to prevent duplicates
         wizard_models = set()
