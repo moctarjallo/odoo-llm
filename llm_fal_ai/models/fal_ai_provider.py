@@ -221,7 +221,7 @@ class LLMProvider(models.Model):
         if model_id:
             params.append(("endpoint_id", model_id))
         else:
-            params.append(("limit", "10"))
+            params.append(("limit", "100"))
         params.append(("expand", "openapi-3.0"))
 
         cursor = None
