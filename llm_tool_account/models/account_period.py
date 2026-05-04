@@ -48,7 +48,7 @@ class AccountPeriod(models.Model):
 
         # 2. Unreconciled bank statement lines
         bank_journals = self.env["account.journal"].search(
-            [("type", "in", ("bank", "cash"))]
+            [("type", "in", ("bank", "cash", "credit"))]
         )
         unreconciled_bank = 0
         if bank_journals:
