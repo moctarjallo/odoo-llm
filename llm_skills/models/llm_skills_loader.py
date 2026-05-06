@@ -459,6 +459,14 @@ class LLMSkillsLoader(models.Model):
                 _logger.exception(
                     "llm_skills: failed to sync loader '%s' on boot", loader.name
                 )
+                # If _sync_skills committed mid-savepoint (e.g. embedding batch
+                # commits), the savepoint release fails and leaves the connection
+                # in an aborted transaction. Roll back to clear it — the
+                # committed work is already durable.
+                try:
+                    self.env.cr.rollback()
+                except Exception:
+                    pass
 
     @api.model
     def _auto_discover_skill_loaders(self):
@@ -477,7 +485,15 @@ class LLMSkillsLoader(models.Model):
             )
             return
 
-        existing_paths = set(self.search([]).mapped("skills_path"))
+        existing_loaders = self.search([])
+        existing_paths = set(existing_loaders.mapped("skills_path"))
+        # Also track resolved absolute paths so relative-path loaders don't get
+        # duplicated by auto-discovery (which always stores absolute paths).
+        existing_resolved = set()
+        for loader in existing_loaders:
+            resolved = loader._resolve_skills_path()
+            if resolved:
+                existing_resolved.add(str(resolved))
 
         addon_paths = [p.strip() for p in config.get("addons_path", "").split(",") if p.strip()]
         for addons_dir in addon_paths:
@@ -498,7 +514,7 @@ class LLMSkillsLoader(models.Model):
                 if not installed:
                     continue
                 skills_path = str(skills_dir)
-                if skills_path in existing_paths:
+                if skills_path in existing_paths or skills_path in existing_resolved:
                     continue
                 loader = self.create({
                     "name": f"{module_name} Skills",
