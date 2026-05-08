@@ -1,7 +1,7 @@
+import base64
 import json
 import logging
 import os
-import base64
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
@@ -131,6 +131,7 @@ class LLMProvider(models.Model):
             json.loads(input_data) if isinstance(input_data, str) else input_data
         )
         input_data = self._fal_ai_resolve_inputs(input_data, model)
+        self._fal_ai_validate_inputs(input_data, model)
 
         try:
             if stream:
@@ -228,11 +229,8 @@ class LLMProvider(models.Model):
         if not inputs or not isinstance(inputs, dict):
             return inputs
 
-        schema_props = (
-            ((model.details or {}).get("input_schema") or {}).get("properties", {})
-            if model
-            else {}
-        )
+        input_schema = self._fal_ai_get_input_schema(model)
+        schema_props = (input_schema or {}).get("properties", {})
 
         resolved = {}
         for key, value in inputs.items():
@@ -268,6 +266,39 @@ class LLMProvider(models.Model):
             resolved[target_key] = value
 
         return resolved
+
+    def _fal_ai_get_input_schema(self, model):
+        """Return the normalized input schema, falling back to OpenAPI refs."""
+        if not model:
+            return {}
+
+        details = model.details or {}
+        input_schema = details.get("input_schema")
+        if input_schema:
+            return input_schema
+
+        openapi_schema = details.get("openapi")
+        if not openapi_schema:
+            return {}
+
+        extracted_input_schema, _output_schema = self._fal_ai_extract_openapi_io_schemas(
+            openapi_schema
+        )
+        return extracted_input_schema or {}
+
+    def _fal_ai_validate_inputs(self, inputs, model):
+        """Fail fast for missing required fal.ai fields before making the API call."""
+        if not inputs or not isinstance(inputs, dict):
+            raise UserError(_("Generation inputs are required."))
+
+        input_schema = self._fal_ai_get_input_schema(model)
+        required = input_schema.get("required", []) if input_schema else []
+        missing = [field for field in required if inputs.get(field) in (None, "")]
+        if missing:
+            raise UserError(
+                _("Missing required generation input(s): %s")
+                % ", ".join(sorted(missing))
+            )
 
     _FAL_MODELS_PER_FETCH = 200  # max models per button click (20 pages × 10)
 
@@ -374,15 +405,8 @@ class LLMProvider(models.Model):
 
         openapi_schema = raw_model.get("openapi")
         if openapi_schema:
-            input_schema = (
-                openapi_schema.get("components", {})
-                .get("schemas", {})
-                .get("Input")
-            )
-            output_schema = (
-                openapi_schema.get("components", {})
-                .get("schemas", {})
-                .get("Output")
+            input_schema, output_schema = self._fal_ai_extract_openapi_io_schemas(
+                openapi_schema
             )
             if input_schema:
                 details["input_schema"] = input_schema
@@ -400,6 +424,66 @@ class LLMProvider(models.Model):
 
     def fal_ai_generate_transcription_schema(self, model_record):
         return model_record.details
+
+    def _fal_ai_extract_openapi_io_schemas(self, openapi_schema):
+        """Extract fal.ai input/output schemas from OpenAPI, including named refs."""
+        schemas = openapi_schema.get("components", {}).get("schemas", {})
+        input_schema = schemas.get("Input")
+        output_schema = schemas.get("Output")
+
+        input_ref = self._fal_ai_find_request_body_ref(openapi_schema)
+        if input_ref:
+            input_schema = self._fal_ai_resolve_schema_ref(openapi_schema, input_ref)
+
+        output_ref = self._fal_ai_find_success_response_ref(openapi_schema)
+        if output_ref:
+            output_schema = self._fal_ai_resolve_schema_ref(openapi_schema, output_ref)
+
+        return input_schema, output_schema
+
+    def _fal_ai_find_request_body_ref(self, openapi_schema):
+        for path_data in openapi_schema.get("paths", {}).values():
+            for operation in path_data.values():
+                if not isinstance(operation, dict):
+                    continue
+                schema = (
+                    operation.get("requestBody", {})
+                    .get("content", {})
+                    .get("application/json", {})
+                    .get("schema", {})
+                )
+                ref = schema.get("$ref")
+                if ref:
+                    return ref
+        return None
+
+    def _fal_ai_find_success_response_ref(self, openapi_schema):
+        for path_data in openapi_schema.get("paths", {}).values():
+            for operation in path_data.values():
+                if not isinstance(operation, dict):
+                    continue
+                responses = operation.get("responses", {})
+                for status in ("200", 200):
+                    schema = (
+                        responses.get(status, {})
+                        .get("content", {})
+                        .get("application/json", {})
+                        .get("schema", {})
+                    )
+                    ref = schema.get("$ref")
+                    if ref and not ref.endswith("/QueueStatus"):
+                        return ref
+        return None
+
+    def _fal_ai_resolve_schema_ref(self, openapi_schema, ref):
+        prefix = "#/components/schemas/"
+        if not isinstance(ref, str) or not ref.startswith(prefix):
+            return None
+        return (
+            openapi_schema.get("components", {})
+            .get("schemas", {})
+            .get(ref[len(prefix):])
+        )
 
     def _fal_ai_capabilities_from_category(self, category, endpoint_id):
         """Map Fal model categories to Odoo provider capabilities."""
