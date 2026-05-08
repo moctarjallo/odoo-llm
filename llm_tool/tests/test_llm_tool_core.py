@@ -170,6 +170,35 @@ class TestLLMToolCore(LLMToolCase):
 
         self.assertEqual(definition["title"], "test_tool")
 
+    def test_tool_context_payload_redacts_data_uri(self):
+        """Tool message context should not retain full base64 provider inputs."""
+        payload = {
+            "status": "error",
+            "error": (
+                "FAL AI generation failed: "
+                "data:image/jpeg;base64," + ("a" * 12000)
+            ),
+            "nested": [{"input": {"image": "data:image/png;base64," + ("b" * 32)}}],
+        }
+
+        sanitized = self.env["mail.message"]._sanitize_tool_context_payload(payload)
+
+        self.assertNotIn("a" * 12000, sanitized["error"])
+        self.assertIn("data:image/jpeg;base64,[redacted 12000 chars]", sanitized["error"])
+        self.assertEqual(
+            sanitized["nested"][0]["input"]["image"],
+            "data:image/png;base64,[redacted 32 chars]",
+        )
+
+    def test_tool_context_payload_truncates_long_strings(self):
+        """Provider errors without data URIs are still bounded."""
+        payload = {"error": "x" * 9000}
+
+        sanitized = self.env["mail.message"]._sanitize_tool_context_payload(payload)
+
+        self.assertLess(len(sanitized["error"]), 8100)
+        self.assertIn("[truncated 1000 chars]", sanitized["error"])
+
     @mute_logger("odoo.sql_db")
     def test_duplicate_tool_name_constraint(self):
         """Test that duplicate tool names are prevented by SQL constraint"""

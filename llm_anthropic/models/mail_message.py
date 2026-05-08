@@ -124,10 +124,20 @@ class MailMessage(models.Model):
                 )
                 return None
 
-            if "result" in tool_data:
-                content = json.dumps(tool_data["result"])
+            # Compress stale odoo_ai_model_finder results — only the latest is useful;
+            # older ones are ~1,000+ tokens of dead weight in the context window.
+            if not is_latest_model_finder and tool_data.get("tool_name") == "odoo_ai_model_finder":
+                content = "[Model list from a previous search — call odoo_ai_model_finder again to get current options.]"
+            elif "result" in tool_data:
+                result = tool_data["result"]
+                if hasattr(self, "_sanitize_tool_context_payload"):
+                    result = self._sanitize_tool_context_payload(result)
+                content = json.dumps(result)
             elif "error" in tool_data:
-                content = json.dumps({"error": tool_data["error"]})
+                error = tool_data["error"]
+                if hasattr(self, "_sanitize_tool_context_payload"):
+                    error = self._sanitize_tool_context_payload(error)
+                content = json.dumps({"error": error})
             else:
                 content = ""
 
