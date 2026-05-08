@@ -1,10 +1,16 @@
 import json
 import logging
+import re
 
 from odoo import models
 from odoo.exceptions import UserError
 
 _logger = logging.getLogger(__name__)
+
+_DATA_URI_BASE64_RE = re.compile(
+    r"data:([a-zA-Z0-9.+-]+/[a-zA-Z0-9.+-]+);base64,([A-Za-z0-9+/=\r\n]+)"
+)
+_MAX_TOOL_CONTEXT_STRING = 8000
 
 
 class MailMessage(models.Model):
@@ -56,6 +62,7 @@ class MailMessage(models.Model):
             "tool_name": tool_name,
             "arguments": arguments,
         }
+        tool_data = self._sanitize_tool_context_payload(tool_data)
 
         _logger.debug(f"Creating tool message for {tool_name} with args: {arguments}")
 
@@ -129,6 +136,7 @@ class MailMessage(models.Model):
 
         # Update status to executing
         tool_data["status"] = "executing"
+        tool_data = self._sanitize_tool_context_payload(tool_data)
         self.write({"body_json": tool_data})
         yield {"type": "message_update", "message": self.to_store_format()}
 
@@ -141,7 +149,8 @@ class MailMessage(models.Model):
 
                 # Update tool data with result
                 tool_data["status"] = "completed"
-                tool_data["result"] = result
+                tool_data["result"] = self._sanitize_tool_context_payload(result)
+                tool_data = self._sanitize_tool_context_payload(tool_data)
                 self.write({"body_json": tool_data})
 
                 # Emit tool_succeeded event
@@ -152,7 +161,7 @@ class MailMessage(models.Model):
                         "tool_name": name,
                         "arguments": self._parse_tool_arguments(args) if args else {},
                         "status": "completed",
-                        "result": result,
+                        "result": tool_data["result"],
                     },
                 }
 
@@ -160,7 +169,8 @@ class MailMessage(models.Model):
             _logger.error(f"Error executing tool {name}: {e}")
             # Update tool data with error
             tool_data["status"] = "error"
-            tool_data["error"] = str(e)
+            tool_data["error"] = self._sanitize_tool_context_payload(str(e))
+            tool_data = self._sanitize_tool_context_payload(tool_data)
             self.write({"body_json": tool_data})
 
             # Emit tool_failed event
@@ -171,7 +181,7 @@ class MailMessage(models.Model):
                     "tool_name": name,
                     "arguments": self._parse_tool_arguments(args) if args else {},
                     "status": "error",
-                    "error": str(e),
+                    "error": tool_data["error"],
                 },
             }
 
@@ -278,6 +288,7 @@ class MailMessage(models.Model):
             "error": error_msg,
             "tool_name": tool_call.get("function", {}).get("name", "unknown_tool"),
         }
+        tool_data = self._sanitize_tool_context_payload(tool_data)
 
         if thread_model:
             return thread_model.message_post(
@@ -304,6 +315,36 @@ class MailMessage(models.Model):
         if self.llm_role == "tool" and self.body_json:
             return self.body_json
         return None
+
+    def _sanitize_tool_context_payload(self, value):
+        """Keep tool context JSON small enough to safely resend to providers."""
+        if isinstance(value, dict):
+            return {
+                key: self._sanitize_tool_context_payload(item)
+                for key, item in value.items()
+            }
+        if isinstance(value, list):
+            return [self._sanitize_tool_context_payload(item) for item in value]
+        if isinstance(value, tuple):
+            return [self._sanitize_tool_context_payload(item) for item in value]
+        if isinstance(value, bytes):
+            return f"[redacted bytes: {len(value)} bytes]"
+        if isinstance(value, str):
+            return self._sanitize_tool_context_string(value)
+        return value
+
+    def _sanitize_tool_context_string(self, value):
+        def redact_data_uri(match):
+            media_type = match.group(1)
+            payload = match.group(2)
+            return f"data:{media_type};base64,[redacted {len(payload)} chars]"
+
+        sanitized = _DATA_URI_BASE64_RE.sub(redact_data_uri, value)
+        if len(sanitized) <= _MAX_TOOL_CONTEXT_STRING:
+            return sanitized
+
+        omitted = len(sanitized) - _MAX_TOOL_CONTEXT_STRING
+        return f"{sanitized[:_MAX_TOOL_CONTEXT_STRING]}... [truncated {omitted} chars]"
 
     def is_tool_message_with_status(self, status):
         """Check if this is a tool message with a specific status.
