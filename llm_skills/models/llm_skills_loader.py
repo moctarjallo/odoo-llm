@@ -459,10 +459,6 @@ class LLMSkillsLoader(models.Model):
                 _logger.exception(
                     "llm_skills: failed to sync loader '%s' on boot", loader.name
                 )
-                # If _sync_skills committed mid-savepoint (e.g. embedding batch
-                # commits), the savepoint release fails and leaves the connection
-                # in an aborted transaction. Roll back to clear it — the
-                # committed work is already durable.
                 try:
                     self.env.cr.rollback()
                 except Exception:
