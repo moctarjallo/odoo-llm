@@ -55,6 +55,10 @@ class LLMKnowledgeChunkEmbedding(models.Model):
         ),
     ]
 
+    @api.model
+    def _valid_field_parameter(self, field, name):
+        return name == "dimension" or super()._valid_field_parameter(field, name)
+
     def name_get(self):
         """Override to provide a better display name"""
         result = []
