@@ -454,8 +454,7 @@ class LLMSkillsLoader(models.Model):
         loaders = self.search([("auto_sync_on_boot", "=", True)])
         for loader in loaders:
             try:
-                with self.env.cr.savepoint():
-                    loader._sync_skills()
+                loader._sync_skills()
             except Exception:
                 _logger.exception(
                     "llm_skills: failed to sync loader '%s' on boot", loader.name
