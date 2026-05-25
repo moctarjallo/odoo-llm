@@ -124,8 +124,14 @@ class LLMMCPServerConfig(models.Model):
 
     @api.model
     def get_active_config(self):
-        """Get the active MCP server configuration"""
-        config = self.search([("active", "=", True)], limit=1)
+        """Get the active MCP server configuration.
+
+        Read with sudo: the dispatcher calls this during the public
+        ``initialize``/``ping`` handshake (before bearer auth is applied),
+        so the request user is the public user. Reading the server's own
+        protocol config is a system operation, not user-scoped data.
+        """
+        config = self.sudo().search([("active", "=", True)], limit=1)
         if not config:
             raise ValidationError("No active MCP Server configuration found.")
         return config

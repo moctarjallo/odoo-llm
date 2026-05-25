@@ -70,7 +70,11 @@ class LLMMCPSession(models.Model):
         # Build search domain
         domain = [("session_id", "=", session_id)]
 
-        return self.search(domain, limit=1)
+        # sudo: sessions are read/written during the public handshake
+        # (before bearer auth), so the request user is the public user.
+        # Session lifecycle is a system operation; user_id is assigned
+        # later on the first authenticated tools/call.
+        return self.sudo().search(domain, limit=1)
 
     @api.model
     def create_new_session(self, user_id=None):
@@ -86,7 +90,8 @@ class LLMMCPSession(models.Model):
         if user_id:
             session_vals["user_id"] = user_id
 
-        session = self.create(session_vals)
+        # sudo: created during the public initialize handshake (see get_session)
+        session = self.sudo().create(session_vals)
 
         return session
 
