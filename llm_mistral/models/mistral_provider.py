@@ -239,11 +239,19 @@ class LLMProvider(models.Model):
         # Call the actual method that interacts with the Mistral API
         return self._process_ocr(model_name, payload, **kwargs)
 
-    def _process_ocr(self, model_name, payload):
+    def _process_ocr(self, model_name, payload, annotation_schema=None):
         mistral_client = self._get_mistral_client()
-        return mistral_client.ocr.process(
-            model=model_name, document=payload, include_image_base64=True
-        )
+        kwargs = {
+            "model": model_name,
+            "document": payload,
+            "include_image_base64": True,
+        }
+        if annotation_schema is not None:
+            kwargs["document_annotation_format"] = {
+                "type": "json_schema",
+                "json_schema": annotation_schema,
+            }
+        return mistral_client.ocr.process(**kwargs)
 
 
 def is_base64_string(data_string):

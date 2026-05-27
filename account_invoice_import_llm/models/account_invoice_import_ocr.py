@@ -19,6 +19,58 @@ class AccountInvoiceImportOCR(models.AbstractModel):
     _name = "account.invoice.import.ocr"
     _description = "Invoice data extraction using LLM and OCR"
 
+    _INVOICE_ANNOTATION_SCHEMA = {
+        "schema": {
+            "type": "object",
+            "title": "InvoiceData",
+            "properties": {
+                "vendorName": {"type": "string", "title": "Vendor Name"},
+                "vat": {"type": "string", "title": "VAT Number"},
+                "invoiceNumber": {"type": "string", "title": "Invoice Number"},
+                "invoiceDate": {"type": "string", "title": "Invoice Date (YYYY-MM-DD)"},
+                "dueDate": {"type": "string", "title": "Due Date (YYYY-MM-DD)"},
+                "currency": {"type": "string", "title": "Currency ISO Code"},
+                "subtotalAmount": {"type": "number", "title": "Subtotal Before Tax"},
+                "taxAmount": {"type": "number", "title": "Tax Amount"},
+                "totalAmount": {"type": "number", "title": "Total Including Tax"},
+                "lines": {
+                    "type": "array",
+                    "title": "Invoice Lines",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "description": {"type": "string", "title": "Description"},
+                            "quantity": {"type": "number", "title": "Quantity"},
+                            "unitPrice": {"type": "number", "title": "Unit Price"},
+                            "lineSubtotal": {
+                                "type": "number",
+                                "title": "Line Subtotal",
+                            },
+                            "taxPercent": {"type": "number", "title": "Tax Percent"},
+                        },
+                        "required": [
+                            "description",
+                            "quantity",
+                            "unitPrice",
+                            "lineSubtotal",
+                        ],
+                        "additionalProperties": False,
+                    },
+                },
+            },
+            "required": [
+                "vendorName",
+                "invoiceNumber",
+                "invoiceDate",
+                "totalAmount",
+                "lines",
+            ],
+            "additionalProperties": False,
+        },
+        "name": "invoice_data",
+        "strict": True,
+    }
+
     @api.model
     def extract_invoice_data(self, file_data, company=None, mimetype="application/pdf"):
         """Extract invoice data from file bytes using OCR + LLM.
@@ -55,24 +107,82 @@ class AccountInvoiceImportOCR(models.AbstractModel):
             'chatter_msg': [],
         }
         """
-        # Step 1: Run OCR directly on file bytes
+        # Fast path: single-call Document AI (OCR + structured extraction)
+        invoice_data = self._run_ocr_with_annotations(file_data, mimetype)
+        if invoice_data is not None:
+            return self._convert_llm_data_to_pivot(invoice_data)
+
+        # Fallback: original OCR → LLM pipeline
         ocr_text = self._run_ocr_on_file_data(file_data, mimetype)
         if not ocr_text:
             raise UserError(
                 _("OCR returned empty text. The document may be unreadable or empty.")
             )
-
-        # Step 2: Render prompt with OCR context
         prepend_messages, assistant = self._render_invoice_extraction_prompt(ocr_text)
-
-        # Step 3: Call LLM directly (no thread)
         llm_response = self._call_llm_for_extraction(prepend_messages, assistant)
-
-        # Step 4: Parse LLM response
         invoice_data = self._parse_llm_response(llm_response)
-
-        # Step 5: Convert to pivot format
         return self._convert_llm_data_to_pivot(invoice_data)
+
+    @api.model
+    def _get_invoice_annotation_schema(self):
+        return self._INVOICE_ANNOTATION_SCHEMA
+
+    @api.model
+    def _run_ocr_with_annotations(self, file_data, mimetype="application/pdf"):
+        """Single-call OCR + Document AI annotation. Returns camelCase dict or None."""
+        provider = self.env["llm.provider"].search(
+            [("service", "=", "mistral")], limit=1
+        )
+        if not provider:
+            return None
+
+        try:
+            ocr_model = provider.mistral_get_default_ocr_model()
+        except Exception:
+            _logger.warning("No OCR model available for annotation path, falling back")
+            return None
+
+        try:
+            ocr_response = provider.process_ocr(
+                model_name=ocr_model.name,
+                data=file_data,
+                mimetype=mimetype,
+                annotation_schema=self._get_invoice_annotation_schema(),
+            )
+        except Exception:
+            _logger.exception("Mistral annotation OCR call failed, falling back")
+            return None
+
+        annotation_str = getattr(ocr_response, "document_annotation", None)
+        if not annotation_str:
+            _logger.info(
+                "No document_annotation returned; falling back to OCR+LLM pipeline"
+            )
+            return None
+
+        try:
+            invoice_data = json.loads(annotation_str)
+        except json.JSONDecodeError:
+            _logger.warning(
+                "Failed to parse document_annotation JSON, falling back. Raw: %.200s",
+                annotation_str,
+            )
+            return None
+
+        if not isinstance(invoice_data, dict) or not invoice_data.get("invoiceNumber"):
+            _logger.warning(
+                "document_annotation missing required fields, falling back. Keys: %s",
+                list(invoice_data.keys())
+                if isinstance(invoice_data, dict)
+                else type(invoice_data),
+            )
+            return None
+
+        _logger.info(
+            "Document AI annotation succeeded for invoice %s",
+            invoice_data.get("invoiceNumber", "unknown"),
+        )
+        return invoice_data
 
     @api.model
     def _run_ocr_on_file_data(self, file_data, mimetype="application/pdf"):

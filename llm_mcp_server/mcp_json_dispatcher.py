@@ -191,7 +191,7 @@ class MCPJsonRPCDispatcher(JsonRPCDispatcher):
         if method_name and method_name.startswith("test"):
             return
 
-        config = request.env["llm.mcp.server.config"].get_active_config()
+        config = request.env["llm.mcp.server.config"].sudo().get_active_config()
 
         # For stateless mode, no session validation needed
         if config.mode == "stateless":
@@ -202,7 +202,7 @@ class MCPJsonRPCDispatcher(JsonRPCDispatcher):
             if not session_id:
                 raise MCPSessionError("Missing mcp-session-id header", http_status=400)
 
-            session = request.env["llm.mcp.session"].get_session(session_id)
+            session = request.env["llm.mcp.session"].sudo().get_session(session_id)
             if not session:
                 raise MCPSessionError("Session not found", http_status=404)
 
