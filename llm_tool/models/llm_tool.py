@@ -270,7 +270,7 @@ class LLMTool(models.Model):
         """Scan for @llm_tool decorated methods and sync to DB."""
         super()._register_hook()
         self._scan_tool_decorators()
-        self._sync_tools_to_db()
+        self._sync_tools_to_db(deactivate_missing=False)
 
     def _scan_tool_decorators(self):
         """Populate _tool_registry from @llm_tool decorated methods."""
@@ -316,7 +316,7 @@ class LLMTool(models.Model):
         return False
 
     @api.model
-    def _sync_tools_to_db(self):
+    def _sync_tools_to_db(self, deactivate_missing=True):
         """Sync _tool_registry → DB via raw SQL.
 
         Acquires a database-specific advisory lock so exactly one worker
@@ -324,8 +324,14 @@ class LLMTool(models.Model):
         the SerializationFailure that occurs when load_modules calls
         flush_all() with dirty ORM state from concurrent workers.
 
-        Called automatically from _register_hook on every startup, and
-        can also be triggered manually via the "Sync Tools" button.
+        Called automatically from _register_hook on every startup with
+        deactivate_missing=False, and manually via the "Sync Tools" button
+        with deactivate_missing=True (the default).
+
+        deactivate_missing=False: only create/update — never deactivate.
+        Used by _register_hook because signaling-triggered partial registry
+        reloads may not see all _inherit extensions, so a tool absent from
+        the current scan is not necessarily gone.
 
         Returns dict: {created: int, updated: int, deactivated: int}.
         """
@@ -414,16 +420,20 @@ class LLMTool(models.Model):
                 )
                 created += 1
 
-        # Deactivate function tools no longer in registry (skip xml-managed)
-        for key, db_row in existing_by_key.items():
-            if db_row["active"] and key not in self._xml_managed_keys:
-                cr.execute(
-                    "UPDATE llm_tool SET active = false,"
-                    "       write_date = %s, write_uid = %s"
-                    " WHERE id = %s",
-                    [now, uid, db_row["id"]],
-                )
-                deactivated += 1
+        # Deactivate function tools no longer in registry (skip xml-managed).
+        # Only runs when explicitly requested (manual Sync Tools button) — never
+        # during boot/reload hooks, where partial registry scans would wrongly
+        # deactivate tools whose _inherit extension wasn't loaded yet.
+        if deactivate_missing:
+            for key, db_row in existing_by_key.items():
+                if db_row["active"] and key not in self._xml_managed_keys:
+                    cr.execute(
+                        "UPDATE llm_tool SET active = false,"
+                        "       write_date = %s, write_uid = %s"
+                        " WHERE id = %s",
+                        [now, uid, db_row["id"]],
+                    )
+                    deactivated += 1
 
         if created or updated or deactivated:
             self.invalidate_model()
@@ -455,7 +465,7 @@ class LLMTool(models.Model):
                 },
             }
 
-        result = Tool._sync_tools_to_db()
+        result = Tool._sync_tools_to_db(deactivate_missing=True)
         if not any(result.values()):
             return {
                 "type": "ir.actions.client",
