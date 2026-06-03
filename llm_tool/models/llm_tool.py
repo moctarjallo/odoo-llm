@@ -147,7 +147,16 @@ class LLMTool(models.Model):
         return create_model("DynamicModel", **fields)
 
     def _get_decorated_method(self):
-        """Get the actual decorated method for function tools"""
+        """Get the actual decorated method for function tools.
+
+        Self-heals a partially-loaded registry. Under prefork (workers > 1) a
+        signaling-triggered registry reload can rebuild a worker's model
+        classes without all ``_inherit`` extensions, so a decorated method
+        contributed by another module (e.g. a client module extending
+        ``product.template``) can be missing on that worker even though a full
+        registry build has it. When detected, rebuild the registry once and
+        re-resolve.
+        """
         self.ensure_one()
 
         if not self.decorator_model or not self.decorator_method:
@@ -157,16 +166,48 @@ class LLMTool(models.Model):
 
         # Get the model (let KeyError propagate if model doesn't exist)
         model_obj = self.env[self.decorator_model]
-        model_class = type(model_obj)
 
-        # Check the method exists on the class
-        if not hasattr(model_class, self.decorator_method):
-            raise AttributeError(
-                f"Method {self.decorator_method} not found on model {self.decorator_model}"
-            )
+        # Check the method exists on the class; rebuild the registry once if not.
+        if not hasattr(type(model_obj), self.decorator_method):
+            model_obj = self._heal_partial_registry()
 
         # Return bound method from the instance (not unbound from class)
         return getattr(model_obj, self.decorator_method)
+
+    def _heal_partial_registry(self):
+        """Rebuild a partially-loaded registry and re-resolve ``decorator_model``.
+
+        A full ``Registry.new()`` re-instantiates every module's classes,
+        re-merging ``_inherit`` extensions (the same operation a fresh boot or
+        ``odoo shell`` performs), then ``Transaction.reset()`` rebinds the open
+        transaction's environments to the rebuilt registry — the procedure Odoo
+        documents as "strongly recommended after reloading the registry".
+        ``Registry.new()`` uses its own cursors, so the running transaction is
+        not committed. This triggers at most once per worker process, since the
+        rebuilt registry is complete and becomes the process default.
+
+        Returns a fresh recordset for ``decorator_model`` bound to the healed
+        registry. Raises ``AttributeError`` if the method is still missing
+        afterwards (e.g. the providing module was genuinely uninstalled).
+        """
+        from odoo.modules.registry import Registry
+
+        _logger.warning(
+            "llm.tool %s: method %s not found on %s — partial registry on this "
+            "worker; rebuilding registry and re-resolving.",
+            self.name,
+            self.decorator_method,
+            self.decorator_model,
+        )
+        Registry.new(self.env.cr.dbname)
+        self.env.transaction.reset()
+
+        model_obj = self.env[self.decorator_model]
+        if not hasattr(type(model_obj), self.decorator_method):
+            raise AttributeError(
+                f"Method {self.decorator_method} not found on model {self.decorator_model}"
+            )
+        return model_obj
 
     def get_input_schema(self):
         """Get input schema - from stored field or generate from method signature
