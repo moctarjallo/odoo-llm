@@ -48,6 +48,7 @@ Use cases include creating specialized assistants for customer support, data ana
         "data/llm_prompt_export_data.xml",
         "data/llm_prompt_data.xml",
         "data/llm_assistant_data.xml",
+        "data/llm_operator_data.xml",
         "views/llm_prompt_views.xml",
         "views/llm_prompt_tag_views.xml",
         "views/llm_prompt_category_views.xml",
