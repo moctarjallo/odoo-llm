@@ -524,34 +524,89 @@ class LLMThread(models.Model):
             _("Please install the llm_assistant module for actual AI generation."),
         )
 
+    # Field types safe to expose to the LLM (no relational lists, no blobs).
+    _LLM_CONTEXT_SAFE_TYPES = frozenset({
+        'char', 'text', 'integer', 'float', 'monetary',
+        'boolean', 'date', 'datetime', 'selection', 'many2one',
+    })
+
+    # System / chatter fields that add noise without value.
+    _LLM_CONTEXT_SKIP_FIELDS = frozenset({
+        'id', 'create_uid', 'write_uid', 'create_date', 'write_date',
+        'message_ids', 'message_follower_ids', 'message_partner_ids',
+        'activity_ids', 'website_message_ids', 'message_has_error',
+        'message_needaction', 'message_is_follower',
+    })
+
     def get_context(self, base_context=None):
         context = {
             **(base_context or {}),
             "thread_id": self.id,
         }
-        # Guard clause: skip if model or res_id not set
         if not self.model or not self.res_id:
             return context
 
         try:
             related_record = self.env[self.model].browse(self.res_id)
-            if related_record:
+            if related_record.exists():
                 context["related_record"] = RelatedRecordProxy(related_record)
                 context["related_model"] = self.model
                 context["related_res_id"] = self.res_id
+                context["record"] = self._build_record_context(related_record)
             else:
                 context["related_record"] = None
                 context["related_model"] = None
                 context["related_res_id"] = None
+                context["record"] = None
         except Exception as e:
             _logger.warning(
                 "Error accessing related record %s,%s: %s",
-                self.model,
-                self.res_id,
-                e,
+                self.model, self.res_id, e,
             )
 
         return context
+
+    def _build_record_context(self, record):
+        """Serialize stored, non-empty fields of the related record for LLM prompt context.
+
+        Returns a dict with special keys _model, _id, _name plus one entry per
+        non-empty stored field of safe type. Subclasses can override to restrict
+        or enrich the field set for a specific model.
+        """
+        data = {
+            '_model': record._name,
+            '_id': record.id,
+            '_name': record.display_name,
+        }
+        try:
+            fields_def = record.fields_get(attributes=['type', 'store', 'string'])
+            model_fields = record._fields
+            for fname, fdef in fields_def.items():
+                if fname in self._LLM_CONTEXT_SKIP_FIELDS:
+                    continue
+                if not fdef.get('store', False):
+                    continue
+                if fdef['type'] not in self._LLM_CONTEXT_SAFE_TYPES:
+                    continue
+                val = getattr(record, fname, None)
+                if val is False or val is None:
+                    continue
+                if fdef['type'] == 'many2one':
+                    data[fname] = val.display_name if val else None
+                elif fdef['type'] == 'selection':
+                    field_obj = model_fields.get(fname)
+                    sel = field_obj.selection if field_obj else []
+                    if callable(sel):
+                        sel = sel(record)
+                    data[fname] = dict(sel).get(val, val)
+                else:
+                    data[fname] = val
+        except Exception:
+            _logger.debug(
+                "Could not serialize fields for %s,%s",
+                record._name, record.id, exc_info=True,
+            )
+        return data
 
     # ============================================================================
     # POSTGRESQL ADVISORY LOCK IMPLEMENTATION
