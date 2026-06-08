@@ -200,27 +200,22 @@ class LLMThread(models.Model):
         """Hook: return a list of formatted messages to prepend to the conversation."""
         self.ensure_one()
 
-        if self.prompt_id:
-            try:
-                # Get messages from the prompt with enhanced context
-                return self.prompt_id.get_messages(self.get_context())
-            except Exception as e:
-                _logger.error(
-                    "Error getting messages from prompt '%s': %s",
-                    self.prompt_id.name,
-                    e,
-                )
-                # Continue without prompt messages rather than failing completely
-                # Post a user-friendly warning to the thread
-                self.message_post(
-                    body=_(
-                        "Note: The prompt '%s' could not be loaded. "
-                        "Continuing without it. (Error: %s)",
-                    )
-                    % (self.prompt_id.name, str(e)),
-                )
+        prompt = self.prompt_id or self.assistant_id.prompt_id
+        if not prompt:
+            return []
 
-        return []
+        try:
+            return prompt.get_messages(self.get_context())
+        except Exception as e:
+            _logger.error("Error getting messages from prompt '%s': %s", prompt.name, e)
+            self.message_post(
+                body=_(
+                    "Note: The prompt '%s' could not be loaded. "
+                    "Continuing without it. (Error: %s)",
+                )
+                % (prompt.name, str(e)),
+            )
+            return []
 
     def generate_messages(self, last_message):
         """Generate messages with actual AI intelligence."""
