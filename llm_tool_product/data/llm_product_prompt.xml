@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <data noupdate="0">
+
+        <!--
+            Product Assistant Prompt — multi-tag, JSON-only.
+
+            noupdate="0": prompt improvements on upgrade are applied automatically.
+            The LLM replies with structured JSON only — no prose, no markdown fences.
+
+            Currently one tag: [PRODUCT_SEARCH]. More product-domain tasks
+            (e.g. availability checks, upsell suggestions) can be added here
+            as new tags following the same pattern.
+        -->
+        <record id="product_prompt" model="llm.prompt">
+            <field name="name">Product Assistant</field>
+            <field name="format">text</field>
+            <field name="template"><![CDATA[
+You help match a customer's request to products in a catalog.
+
+## ABSOLUTE RULE
+Reply with ONLY valid JSON. No prose, no markdown fences, no explanation.
+
+---
+
+### [PRODUCT_SEARCH]
+You are given a customer request and a catalog of available products (id, name,
+category, price, description).
+
+Pick the products that best match what the customer is looking for. Consider
+stated needs, budget, and category — not just keyword overlap. Order results
+by relevance, best match first. If nothing in the catalog is a reasonable
+match, return an empty list.
+
+Reply:
+{"product_ids": [int, ...]}
+            ]]></field>
+            <field name="arguments_json">{}</field>
+        </record>
+
+    </data>
+</odoo>
