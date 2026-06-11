@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <data noupdate="1">
+
+        <!--
+            Product Assistant — background, stateless, no tool calls.
+
+            noupdate="1": operator-configured provider/model is preserved on upgrade.
+
+            model_id must be set manually via LLM > Assistants after install
+            (or by a post_init_hook in a client/setup module). Recommended: a
+            cheap/fast chat model — this runs on every odoo_product_search
+            call, with the full catalog in the prompt.
+        -->
+        <record id="product_assistant" model="llm.assistant">
+            <field name="name">Product Assistant</field>
+            <field name="code">product_assistant</field>
+            <field name="prompt_id" ref="product_prompt"/>
+            <field name="is_public" eval="False"/>
+            <field name="default_values">{}</field>
+            <field name="tool_calls_max">0</field>
+        </record>
+
+    </data>
+</odoo>

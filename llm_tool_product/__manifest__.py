@@ -2,14 +2,14 @@
     "name": "LLM Tool Product",
     "version": "18.0.1.0.0",
     "category": "Productivity/LLM",
-    "summary": "Semantic product search tool for AI assistants",
+    "summary": "Product catalog search tool for AI assistants",
     "description": """
-        LLM Tool Product - Semantic Product Search
+        LLM Tool Product - Product Catalog Search
 
-        Embeds the saleable product catalog into a vector collection and
-        exposes an `odoo_product_search` tool so AI assistants can find
-        products by describing what the customer wants, instead of
-        requiring exact names or codes.
+        Exposes an `odoo_product_search` tool so AI assistants can find
+        saleable products by describing what the customer wants, instead of
+        requiring exact names or codes. Uses an LLM assistant to match the
+        customer's request against the product catalog.
     """,
     "author": "Apexive Solutions LLC",
     "website": "https://github.com/apexive/odoo-llm",
@@ -17,12 +17,11 @@
     "depends": [
         "product",
         "llm_tool",
-        "llm_knowledge",
-        "llm_pgvector",
-        "llm_skills",
+        "llm_assistant",
     ],
     "data": [
-        "data/llm_collection_data.xml",
+        "data/llm_product_prompt.xml",
+        "data/llm_product_assistant.xml",
     ],
     "installable": True,
     "application": False,
