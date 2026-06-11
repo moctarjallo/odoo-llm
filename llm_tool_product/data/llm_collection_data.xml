@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<odoo noupdate="1">
+    <!-- One chunk per saleable product.template, kept in sync by
+         product.template._sync_llm_catalog_chunk(). -->
+    <record id="llm_collection_product_catalog" model="llm.knowledge.collection">
+        <field name="name">Product Catalog</field>
+        <field name="description">Saleable products — one chunk per product.template for semantic product search.</field>
+        <field name="store_id" ref="llm_skills.llm_store_pgvector_default"/>
+        <!-- Fallback default — only the model llm_skills ships a static xmlid
+             for. _switch_to_nomic_api_embedding_model() overrides this to the
+             Nomic Atlas API model on install/upgrade if that provider is
+             configured (avoids the unreachable Ollama host_base in dev/test). -->
+        <field name="embedding_model_id" ref="llm_skills.nomic_embed_text_latest"/>
+        <field name="active">True</field>
+    </record>
+</odoo>
