@@ -18,6 +18,7 @@
         "product",
         "llm_tool",
         "llm_assistant",
+        "llm_odoo",
     ],
     "data": [
         "data/llm_product_prompt.xml",
