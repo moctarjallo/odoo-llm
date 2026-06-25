@@ -62,14 +62,6 @@ class LlmThread(models.Model):
         self.ensure_one()
         for _ in self.generate():
             pass
-        self._post_generation_pipeline()
-
-    def _post_generation_pipeline(self):
-        """Re-run the pipeline after generation so it can act on signals the AI
-        produced (e.g. a readiness signal that triggers ``propose``)."""
-        self.ensure_one()
-        if self.assistant_id.auto_pipeline and self.partner_id:
-            self._run_pipeline()
 
     # -------------------------------------------------------------------------
     # Inbound dispatch (V → C)
