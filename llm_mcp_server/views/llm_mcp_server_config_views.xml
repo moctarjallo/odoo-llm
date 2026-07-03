@@ -17,6 +17,7 @@
                     </div>
                     <group>
                         <group>
+                            <field name="endpoint_path" />
                             <field name="version" />
                             <field name="latest_protocol_version" />
                             <field
@@ -219,7 +220,7 @@
             </p>
             <p>
                 Configure the Model Context Protocol (MCP) server settings including server name, version, and protocol version.
-                Only one configuration can be active at a time.
+                Each active configuration must have a unique endpoint path (e.g. /mcp, /mcp/sage500).
             </p>
         </field>
     </record>

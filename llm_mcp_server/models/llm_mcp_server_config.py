@@ -111,42 +111,75 @@ class LLMMCPServerConfig(models.Model):
         tracking=True,
         help="Server operation mode",
     )
+    endpoint_path = fields.Char(
+        string="Endpoint Path",
+        required=True,
+        default="/mcp",
+        tracking=True,
+        help="URL path this config governs (e.g. /mcp or /mcp/sage500). "
+        "Each active config must have a unique path.",
+    )
 
-    @api.constrains("active")
-    def _check_single_active_record(self):
-        """Ensure only one config record can be active at a time"""
-        if self.active:
-            other_active = self.search([("id", "!=", self.id), ("active", "=", True)])
-            if other_active:
+    @api.constrains("active", "endpoint_path")
+    def _check_unique_active_endpoint_path(self):
+        """Each endpoint path may have at most one active config."""
+        for record in self:
+            if not record.active:
+                continue
+            duplicate = self.search(
+                [
+                    ("id", "!=", record.id),
+                    ("active", "=", True),
+                    ("endpoint_path", "=", record.endpoint_path),
+                ],
+                limit=1,
+            )
+            if duplicate:
                 raise ValidationError(
-                    "Only one MCP Server configuration can be active at a time."
+                    f"An active configuration for '{record.endpoint_path}' already exists. "
+                    "Deactivate the existing one first."
                 )
 
     @api.model
-    def get_active_config(self):
-        """Get the active MCP server configuration.
+    def get_active_config(self, path=None):
+        """Return the active config whose endpoint_path best matches *path*.
 
-        Read with sudo: the dispatcher calls this during the public
-        ``initialize``/``ping`` handshake (before bearer auth is applied),
-        so the request user is the public user. Reading the server's own
-        protocol config is a system operation, not user-scoped data.
+        If *path* is None the current request URL is used. Matching is
+        longest-prefix: /mcp/sage500 beats /mcp for a request to
+        /mcp/sage500.  Falls back to the first active config when nothing
+        matches (preserves backward-compat for callers without a request).
         """
-        config = self.sudo().search([("active", "=", True)], limit=1)
-        if not config:
+        if path is None:
+            try:
+                from odoo.http import request as http_req  # noqa: PLC0415
+
+                if http_req:
+                    path = http_req.httprequest.path
+            except Exception:
+                pass
+
+        all_active = self.sudo().search([("active", "=", True)])
+        if not all_active:
             raise ValidationError("No active MCP Server configuration found.")
-        return config
+
+        if path:
+            matches = [c for c in all_active if path.startswith(c.endpoint_path or "")]
+            if matches:
+                return max(matches, key=lambda c: len(c.endpoint_path or ""))
+
+        return all_active[0]
 
     def get_mcp_server_url(self):
-        """Get the MCP server URL that external clients can reach"""
-        if self.external_url:
-            return f"{self.external_url.rstrip('/')}/mcp"
-        else:
-            base_url = (
-                self.env["ir.config_parameter"]
-                .sudo()
-                .get_param("web.base.url", "http://localhost:8069")
-            )
-            return f"{base_url}/mcp"
+        """Get the MCP server URL that external clients can reach."""
+        base = (
+            self.external_url.rstrip("/")
+            if self.external_url
+            else self.env["ir.config_parameter"]
+            .sudo()
+            .get_param("web.base.url", "http://localhost:8069")
+            .rstrip("/")
+        )
+        return f"{base}{self.endpoint_path or '/mcp'}"
 
     def handle_initialize_request(self, client_info=None, protocol_version=None):
         """Handle MCP initialize request - return MCP InitializeResult"""

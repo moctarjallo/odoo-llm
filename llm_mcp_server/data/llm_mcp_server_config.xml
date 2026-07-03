@@ -10,6 +10,7 @@
 
         <!-- Server Mode Configuration -->
         <field name="mode">stateful</field>
+        <field name="endpoint_path">/mcp</field>
 
         <!-- External URL left empty for auto-detection from web.base.url -->
         <field name="external_url" />
