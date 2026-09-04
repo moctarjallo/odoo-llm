@@ -1,10 +1,13 @@
 import base64
+import logging
 from typing import Any
 
 from odoo import _, models
 from odoo.exceptions import UserError, ValidationError
 
 from odoo.addons.llm.models.mail_message import AUDIO_MIMETYPES
+
+_logger = logging.getLogger(__name__)
 
 
 class IrAttachment(models.Model):
@@ -16,6 +19,7 @@ class IrAttachment(models.Model):
         attachment_ids: list[int],
         prompt: str | None = None,
         language: str | None = None,
+        target_language: str | None = None,
     ) -> list[dict[str, Any]]:
         """Transcribe multiple audio attachments with the selected model."""
         model = self._get_transcription_model(model)
@@ -35,6 +39,7 @@ class IrAttachment(models.Model):
                         model=model,
                         prompt=prompt,
                         language=language,
+                        target_language=target_language,
                     )
                 )
             except Exception as exc:
@@ -60,7 +65,9 @@ class IrAttachment(models.Model):
             raise UserError(_("Provider '%s' is inactive.") % model.provider_id.name)
         return model
 
-    def _transcribe_attachment(self, attachment, model, prompt=None, language=None):
+    def _transcribe_attachment(
+        self, attachment, model, prompt=None, language=None, target_language=None
+    ):
         mimetype = attachment.mimetype
         normalized_mimetype = (mimetype or "").split(";", 1)[0].strip().lower()
 
@@ -81,13 +88,35 @@ class IrAttachment(models.Model):
             )
 
         audio_bytes = base64.b64decode(attachment.datas)
-        transcript = model.transcribe_audio(
-            data=audio_bytes,
-            filename=attachment.name or "audio.bin",
-            mimetype=normalized_mimetype,
-            prompt=prompt,
-            language=language,
-        )
+        filename = attachment.name or "audio.bin"
+        provider = model.provider_id
+        if target_language and provider.supports_audio_translation():
+            translated = provider.translate_audio(
+                audio_bytes,
+                filename,
+                normalized_mimetype,
+                source_language=language,
+                target_language=target_language,
+            )
+            transcript = {
+                "text": translated.get("text", ""),
+                "language": translated.get("target_language") or target_language,
+                "duration": None,
+                "model": model.name,
+            }
+        else:
+            if target_language:
+                _logger.warning(
+                    "Provider '%s' cannot translate speech; transcribing as spoken.",
+                    provider.service,
+                )
+            transcript = model.transcribe_audio(
+                data=audio_bytes,
+                filename=filename,
+                mimetype=normalized_mimetype,
+                prompt=prompt,
+                language=language,
+            )
 
         return {
             "attachment_id": attachment.id,

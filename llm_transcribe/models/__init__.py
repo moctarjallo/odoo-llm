@@ -1,4 +1,5 @@
 from . import ir_attachment
+from . import llm_assistant
 from . import llm_model
 from . import llm_provider
 from . import llm_thread

@@ -60,7 +60,9 @@ class LLMThread(models.Model):
                 )
                 return
             results = self.env["ir.attachment"].transcribe_attachments(
-                model=model, attachment_ids=attachments.ids
+                model=model,
+                attachment_ids=attachments.ids,
+                target_language=self._get_auto_transcription_language(),
             )
             body = self._format_auto_transcripts(results)
             if body:
@@ -71,6 +73,14 @@ class LLMThread(models.Model):
                 "Auto-transcription failed for message %s; leaving it as posted.",
                 message.id,
             )
+
+    def _get_auto_transcription_language(self):
+        """Language to render voice notes in, per the thread's assistant.
+
+        Empty means keep the words as spoken.
+        """
+        assistant = getattr(self, "assistant_id", None)
+        return assistant.transcription_language if assistant else None
 
     def _get_auto_transcription_model(self):
         """The transcription model to use: the default one, else any active one."""
