@@ -15,8 +15,8 @@
         "llm_assistant",
         "web_json_editor",
     ],
-    "author": "Apexive Solutions LLC",
-    "website": "https://github.com/apexive/odoo-llm",
+    "author": "Ordomatics",
+    "website": "https://github.com/moctarjallo/odoo-llm",
     "data": [
         "data/llm_tool_data.xml",
         "views/llm_model_views.xml",
