@@ -55,13 +55,9 @@ class IrAttachment(models.Model):
         if not model.active:
             raise UserError(_("Model '%s' is inactive.") % model.name)
         if model.model_use != "transcription":
-            raise UserError(
-                _("Model '%s' is not a transcription model.") % model.name
-            )
+            raise UserError(_("Model '%s' is not a transcription model.") % model.name)
         if not model.provider_id.active:
-            raise UserError(
-                _("Provider '%s' is inactive.") % model.provider_id.name
-            )
+            raise UserError(_("Provider '%s' is inactive.") % model.provider_id.name)
         return model
 
     def _transcribe_attachment(self, attachment, model, prompt=None, language=None):

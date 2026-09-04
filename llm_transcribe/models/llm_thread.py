@@ -1,9 +1,12 @@
 import json
 import logging
 
-from odoo import api, fields, models
+from markupsafe import Markup
+
+from odoo import fields, models
 from odoo.exceptions import UserError
 
+from odoo.addons.llm.models.mail_message import AUDIO_MIMETYPES
 from odoo.addons.llm_assistant.utils import render_template
 
 _logger = logging.getLogger(__name__)
@@ -23,6 +26,77 @@ class LLMThread(models.Model):
         ),
         ondelete="restrict",
     )
+
+    def message_post(self, *, llm_role=None, **kwargs):
+        """Transcribe audio on incoming user messages.
+
+        Most chat models cannot hear, and nothing surfaces attachment ids into
+        their context, so a voice note would otherwise be invisible to them.
+        Folding the transcript into the body makes voice input work for every
+        provider without any of them knowing about audio.
+        """
+        message = super().message_post(llm_role=llm_role, **kwargs)
+        if llm_role == "user":
+            self._auto_transcribe_attachments(message)
+        return message
+
+    def _auto_transcribe_attachments(self, message):
+        """Append transcripts of any audio attachments to the message body.
+
+        Never raises: a transcription failure must not stop the user's message
+        from being posted.
+        """
+        self.ensure_one()
+        try:
+            attachments = message._get_attachments_by_mimetype(AUDIO_MIMETYPES)
+            if not attachments:
+                return
+            model = self._get_auto_transcription_model()
+            if not model:
+                _logger.warning(
+                    "Audio attached to thread %s but no transcription model is "
+                    "configured; skipping auto-transcription.",
+                    self.id,
+                )
+                return
+            results = self.env["ir.attachment"].transcribe_attachments(
+                model=model, attachment_ids=attachments.ids
+            )
+            body = self._format_auto_transcripts(results)
+            if body:
+                # Html fields escape plain str in Odoo 18; Markup keeps the markup.
+                message.body = Markup(message.body or "") + body
+        except Exception:
+            _logger.exception(
+                "Auto-transcription failed for message %s; leaving it as posted.",
+                message.id,
+            )
+
+    def _get_auto_transcription_model(self):
+        """The transcription model to use: the default one, else any active one."""
+        Model = self.env["llm.model"]
+        domain = [("model_use", "=", "transcription"), ("active", "=", True)]
+        return Model.search(domain + [("default", "=", True)], limit=1) or Model.search(
+            domain, limit=1
+        )
+
+    def _format_auto_transcripts(self, results):
+        parts = []
+        for result in results:
+            label = result.get("attachment_name") or "Audio"
+            if result.get("error"):
+                parts.append(
+                    Markup("<p><em>[Audio transcription failed for %s: %s]</em></p>")
+                    % (label, result["error"])
+                )
+                continue
+            transcript = (result.get("transcript") or "").strip()
+            if transcript:
+                parts.append(
+                    Markup("<p><em>[Audio transcript - %s]</em><br/>%s</p>")
+                    % (label, transcript)
+                )
+        return Markup("").join(parts)
 
     def get_transcription_input_schema(self):
         """Get input schema for transcription forms."""
