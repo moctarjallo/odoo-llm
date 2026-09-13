@@ -9,8 +9,10 @@
 Transcribe audio using a specified transcription model. This tool mirrors odoo_generate but targets speech-to-text workflows.
 
 Parameters:
-    model_id: The ID of the llm.model to use for transcription (must have model_use='transcription')
     inputs: A dictionary containing parameters according to the model's input_schema (for example {"attachment_ids": [1, 2], "language": "fr"})
+    model_id: Optional. The ID of a specific llm.model to use for transcription
+      (must have model_use='transcription'). Omit it to use the default (or any
+      active) transcription model automatically.
 
 Returns:
     A dictionary containing:
