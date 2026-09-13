@@ -270,7 +270,7 @@ class LLMThread(models.Model):
                         last_message,
                     )
                     last_message = tool_message
-                    self.env.cr.commit()
+                    self._stream_commit()
             else:
                 _logger.info(
                     f"Breaking loop. Last message role: {last_message.llm_role}, "
@@ -581,12 +581,12 @@ class LLMThread(models.Model):
                     llm_role="assistant",
                     author_id=False,
                 )
-                self.env.cr.commit()
+                self._stream_commit()
                 self._notify_bus("message_create", message)
                 yield {"type": "message_create", "message": message.to_store_format()}
             else:
                 message.write({"body_json": body_json})
-                self.env.cr.commit()
+                self._stream_commit()
                 self._notify_bus("message_update", message)
                 yield {"type": "message_update", "message": message.to_store_format()}
         elif message and accumulated_content:
@@ -595,6 +595,21 @@ class LLMThread(models.Model):
             yield {"type": "message_update", "message": message.to_store_format()}
 
         return message
+
+    def _stream_commit(self):
+        """Flush a partial response so a watching browser sees it mid-generation.
+
+        Skipped inside a queue job: queue_job forbids commits there and raises
+        RuntimeError("Commit is forbidden in queue jobs"), and it is right to —
+        they defeat the job's rollback. A job-driven generation has no browser
+        attached anyway; the WhatsApp path delivers the finished reply with a
+        separate _send_to_whatsapp job. queue_job stamps job_uuid on the running
+        job's context (job.py: recordset.with_context(job_uuid=self.uuid)), so
+        this needs nothing from callers and covers paths added later.
+        """
+        if self.env.context.get("job_uuid"):
+            return
+        self.env.cr.commit()
 
     def _handle_non_streaming_response(self, response):
         """Handle non-streaming response from LLM provider."""
