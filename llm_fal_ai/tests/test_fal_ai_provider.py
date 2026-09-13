@@ -13,17 +13,26 @@ class TestFalAIProvider(TransactionCase):
             }
         )
 
-    def test_category_mapping_for_image_model(self):
-        capabilities = self.provider._fal_ai_capabilities_from_category(
-            "text-to-image", "fal-ai/flux/dev"
+    def test_import_model_use_is_the_derived_capability(self):
+        self.assertEqual(
+            self.provider._determine_model_use("fal-ai/flux/dev", ["image_generation"]),
+            "image_generation",
         )
-        self.assertEqual(capabilities, ["image_generation"])
+        self.assertEqual(
+            self.provider._determine_model_use("fal-ai/ltx-video", ["generation"]),
+            "generation",
+        )
 
-    def test_category_mapping_for_video_model(self):
-        capabilities = self.provider._fal_ai_capabilities_from_category(
-            "text-to-video", "fal-ai/wan/v2.2-a14b/text-to-video"
+    def test_unknown_capability_falls_back_to_base_rules(self):
+        self.assertEqual(
+            self.provider._determine_model_use("fal-ai/x", ["not-a-model-use"]), "chat"
         )
-        self.assertEqual(capabilities, ["generation"])
+
+    def test_other_providers_keep_base_rules(self):
+        other = self.env["llm.provider"].new({"name": "Other", "service": False})
+        self.assertEqual(
+            other._determine_model_use("some-image-model", ["image_generation"]), "chat"
+        )
 
     def test_parse_model_extracts_openapi_schemas(self):
         raw_model = {

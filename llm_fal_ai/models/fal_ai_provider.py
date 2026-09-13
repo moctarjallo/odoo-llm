@@ -9,6 +9,8 @@ from urllib.request import Request, urlopen
 from odoo import _, api, fields, models
 from odoo.exceptions import UserError
 
+from .fal_ai_model_use import derive_model_use
+
 _logger = logging.getLogger(__name__)
 
 try:
@@ -396,10 +398,8 @@ class LLMProvider(models.Model):
 
         metadata = raw_model.get("metadata") or {}
         category = (metadata.get("category") or "").lower()
-        capabilities = self._fal_ai_capabilities_from_category(category, endpoint_id)
 
         details = self.serialize_model_data(raw_model)
-        details["capabilities"] = capabilities
         details["category"] = category
         details["description"] = metadata.get("description", "")
 
@@ -413,11 +413,23 @@ class LLMProvider(models.Model):
             if output_schema:
                 details["output_schema"] = output_schema
 
+        # After the schemas: what the model returns decides, not the category.
+        details["capabilities"] = [derive_model_use(endpoint_id, details)[0]]
+
         return {
             "id": endpoint_id,
             "name": endpoint_id,
             "details": details,
         }
+
+    def _determine_model_use(self, name, capabilities):
+        # A Fal capability is the model_use derived at import; the base rules would
+        # turn generation and image_generation into chat.
+        if self.service == "fal_ai" and capabilities:
+            usages = dict(self.env["llm.model"]._get_available_model_usages())
+            if capabilities[0] in usages:
+                return capabilities[0]
+        return super()._determine_model_use(name, capabilities)
 
     def fal_ai_should_generate_transcription_schema(self, model_record):
         return False
@@ -484,36 +496,6 @@ class LLMProvider(models.Model):
             .get("schemas", {})
             .get(ref[len(prefix):])
         )
-
-    def _fal_ai_capabilities_from_category(self, category, endpoint_id):
-        """Map Fal model categories to Odoo provider capabilities."""
-        name = endpoint_id.lower()
-
-        if any(
-            token in category
-            for token in ["speech-to-text", "speech_to_text", "transcription", "stt"]
-        ):
-            return ["transcription"]
-
-        if any(token in name for token in ["transcribe", "transcription", "whisper", "stt"]):
-            return ["transcription"]
-
-        if any(token in category for token in ["image", "inpaint", "upscale"]):
-            return ["image_generation"]
-
-        if any(
-            token in category
-            for token in ["video", "audio", "music", "speech", "3d", "training"]
-        ):
-            return ["generation"]
-
-        if any(token in name for token in ["image", "flux", "lcm"]):
-            return ["image_generation"]
-
-        if any(token in name for token in ["video", "audio", "music", "speech", "3d"]):
-            return ["generation"]
-
-        return ["generation"]
 
     def _fal_ai_build_transcription_inputs(
         self,
