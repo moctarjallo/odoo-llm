@@ -244,6 +244,14 @@ class MailMessage(models.Model):
         Base method for DRY attachment extraction. Returns raw attachment records
         filtered by the given mimetypes and having data.
 
+        Matches on the mimetype's media type only, ignoring any parameters
+        (e.g. "audio/ogg; codecs=opus" matches "audio/ogg") - real-world sources
+        routinely include parameters that a bare exact-match would silently
+        reject. WhatsApp voice notes are the confirmed case: Meta always sends
+        "audio/ogg; codecs=opus", and an exact match against AUDIO_MIMETYPES's
+        bare "audio/ogg" would filter every one of them out before
+        transcription is ever attempted.
+
         Args:
             mimetypes: Tuple of mimetype strings to filter by
 
@@ -252,7 +260,9 @@ class MailMessage(models.Model):
         """
         self.ensure_one()
         return self.attachment_ids.filtered(
-            lambda att: att.mimetype and att.mimetype in mimetypes and att.datas,
+            lambda att: att.mimetype
+            and att.mimetype.split(";", 1)[0].strip().lower() in mimetypes
+            and att.datas,
         )
 
     # Max pixel dimension when sending images to the LLM for vision/understanding.
@@ -312,6 +322,7 @@ class MailMessage(models.Model):
         """
         try:
             import io
+
             from PIL import Image
 
             img = Image.open(io.BytesIO(raw_bytes))
