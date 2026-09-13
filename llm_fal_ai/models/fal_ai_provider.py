@@ -508,7 +508,9 @@ class LLMProvider(models.Model):
     ):
         schema = ((model.details or {}).get("input_schema") or {}).get("properties", {})
         inputs = {}
-        data_uri = f"data:{mimetype or 'application/octet-stream'};base64,{base64.b64encode(data).decode()}"
+        # WhatsApp voice notes arrive as "audio/ogg; codecs=opus"; parameters break the data URL.
+        media_type = (mimetype or "application/octet-stream").split(";", 1)[0].strip()
+        data_uri = f"data:{media_type};base64,{base64.b64encode(data).decode()}"
 
         for field_name in self.FAL_TRANSCRIPTION_FIELD_CANDIDATES:
             if field_name in schema:

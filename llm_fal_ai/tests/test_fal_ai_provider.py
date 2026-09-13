@@ -34,6 +34,20 @@ class TestFalAIProvider(TransactionCase):
             other._determine_model_use("some-image-model", ["image_generation"]), "chat"
         )
 
+    def test_transcription_data_url_drops_mimetype_parameters(self):
+        """WhatsApp voice notes are "audio/ogg; codecs=opus"; Fal rejected the
+        parameterised data URL as "Unsupported data URL" (smartacus, 2026-09-13)."""
+        model = self.env["llm.model"].new(
+            {
+                "name": "fal-ai/wizper",
+                "details": {"input_schema": {"properties": {"audio_url": {}}}},
+            }
+        )
+        inputs = self.provider._fal_ai_build_transcription_inputs(
+            model, b"OggS", "voice.ogg", "audio/ogg; codecs=opus"
+        )
+        self.assertTrue(inputs["audio_url"].startswith("data:audio/ogg;base64,"))
+
     def test_parse_model_extracts_openapi_schemas(self):
         raw_model = {
             "endpoint_id": "fal-ai/flux/dev",
