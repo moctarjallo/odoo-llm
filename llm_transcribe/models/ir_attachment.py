@@ -104,6 +104,23 @@ class IrAttachment(models.Model):
                 "duration": None,
                 "model": model.name,
             }
+            # A translation carries no trace of what was said; keep the words as
+            # spoken so the assistant can tell which language the customer used.
+            try:
+                original = model.transcribe_audio(
+                    data=audio_bytes,
+                    filename=filename,
+                    mimetype=normalized_mimetype,
+                    prompt=prompt,
+                    language=language,
+                )
+                transcript["original_text"] = (original.get("text") or "").strip()
+            except Exception:
+                _logger.warning(
+                    "Transcribing '%s' as spoken failed; keeping the translation only.",
+                    attachment.name,
+                    exc_info=True,
+                )
         else:
             if target_language:
                 _logger.warning(
@@ -127,4 +144,5 @@ class IrAttachment(models.Model):
             "language": transcript.get("language"),
             "duration": transcript.get("duration"),
             "transcript": transcript.get("text", ""),
+            "original_transcript": transcript.get("original_text", ""),
         }

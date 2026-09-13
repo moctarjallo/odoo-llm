@@ -214,14 +214,45 @@ class TestAutoTranscribeLanguage(TransactionCase):
                 "translate_audio",
                 return_value={"text": "Just peace.", "target_language": "en"},
             ) as translate,
-            patch.object(type(self.env["llm.model"]), "transcribe_audio") as transcribe,
+            patch.object(
+                type(self.env["llm.model"]),
+                "transcribe_audio",
+                return_value={"text": "Jàmm rek.", "language": "wo"},
+            ) as transcribe,
         ):
             message = self.thread.message_post(
                 body="hi", llm_role="user", attachment_ids=[self.att.id]
             )
         translate.assert_called_once()
-        transcribe.assert_not_called()
-        self.assertIn("Just peace.", tools.html2plaintext(message.body))
+        # Also transcribed as spoken: the translation alone hides the customer's language.
+        transcribe.assert_called_once()
+        plain = tools.html2plaintext(message.body)
+        self.assertIn("As spoken: Jàmm rek.", plain)
+        self.assertIn("English: Just peace.", plain)
+
+    def test_failed_verbatim_transcription_keeps_the_translation(self):
+        self.assistant.transcription_language = "en"
+        with (
+            patch.object(
+                type(self.provider), "supports_audio_translation", return_value=True
+            ),
+            patch.object(
+                type(self.provider),
+                "translate_audio",
+                return_value={"text": "Just peace.", "target_language": "en"},
+            ),
+            patch.object(
+                type(self.env["llm.model"]),
+                "transcribe_audio",
+                side_effect=Exception("provider down"),
+            ),
+        ):
+            message = self.thread.message_post(
+                body="hi", llm_role="user", attachment_ids=[self.att.id]
+            )
+        plain = tools.html2plaintext(message.body)
+        self.assertIn("Just peace.", plain)
+        self.assertNotIn("As spoken", plain)
 
     def test_no_language_keeps_the_words_as_spoken(self):
         with (

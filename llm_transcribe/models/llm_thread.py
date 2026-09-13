@@ -101,7 +101,17 @@ class LLMThread(models.Model):
                 )
                 continue
             transcript = (result.get("transcript") or "").strip()
-            if transcript:
+            original = (result.get("original_transcript") or "").strip()
+            if transcript and original and original != transcript:
+                languages = dict(
+                    self.env["llm.assistant"]._fields["transcription_language"].selection
+                )
+                code = result.get("language")
+                parts.append(
+                    Markup("<p><em>[Audio transcript - %s]</em><br/>As spoken: %s<br/>%s: %s</p>")
+                    % (label, original, languages.get(code, code or "Translation"), transcript)
+                )
+            elif transcript:
                 parts.append(
                     Markup("<p><em>[Audio transcript - %s]</em><br/>%s</p>")
                     % (label, transcript)
