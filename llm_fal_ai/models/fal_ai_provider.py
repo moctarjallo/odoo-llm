@@ -232,8 +232,10 @@ class LLMProvider(models.Model):
         if not inputs or not isinstance(inputs, dict):
             return inputs
 
+        # Only media fields hold attachment IDs: `duration: 90` was sent as attachment 90's
+        # PNG (smartacus, 2026-09-15).
         resolved = {
-            key: self._fal_ai_resolve_attachment_value(value)
+            key: self._fal_ai_resolve_attachment_value(value) if self._fal_ai_is_media_key(key) else value
             for key, value in inputs.items()
         }
         schema_props = (self._fal_ai_get_input_schema(model) or {}).get("properties", {})
@@ -280,6 +282,15 @@ class LLMProvider(models.Model):
         mimetype = att.mimetype or "application/octet-stream"
         _logger.info("fal_ai: resolved attachment %s (%s)", att_id, mimetype)
         return f"data:{mimetype};base64,{att.datas.decode()}"
+
+    _FAL_MEDIA_KEYS = frozenset({
+        "image", "images", "audio", "video", "mask", "voice_sample", "ref_audio",
+        "reference_image", "reference_images", "attachment", "attachments",
+    })
+
+    @classmethod
+    def _fal_ai_is_media_key(cls, key):
+        return key in cls._FAL_MEDIA_KEYS or key.endswith(("_url", "_urls"))
 
     @staticmethod
     def _fal_ai_is_array_field(spec):

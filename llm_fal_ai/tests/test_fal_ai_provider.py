@@ -290,3 +290,21 @@ class TestFalAIProvider(TransactionCase):
     def test_input_schema_is_reachable_from_the_model(self):
         model = self._edit_model("x/m", ["prompt"], {"prompt": {}})
         self.assertEqual(model.generation_input_schema()["required"], ["prompt"])
+
+    def test_a_number_is_not_mistaken_for_an_attachment(self):
+        attachment = self.env["ir.attachment"].create({"name": "x.png", "raw": b"\x89PNG", "mimetype": "image/png"})
+        model = self._edit_model(
+            "cassetteai/music-generator",
+            ["prompt", "duration"],
+            {"prompt": {"type": "string"}, "duration": {"type": "integer"}},
+        )
+        resolved = self.provider._fal_ai_resolve_inputs(
+            {"prompt": "mbalax", "duration": attachment.id}, model
+        )
+        self.assertEqual(resolved["duration"], attachment.id)
+
+    def test_a_media_field_still_resolves_its_attachment(self):
+        attachment = self.env["ir.attachment"].create({"name": "x.png", "raw": b"\x89PNG", "mimetype": "image/png"})
+        model = self._edit_model("x/edit", ["image_url"], {"image_url": {"type": "string"}})
+        resolved = self.provider._fal_ai_resolve_inputs({"image": attachment.id}, model)
+        self.assertTrue(resolved["image_url"].startswith("data:image/png;base64,"))
