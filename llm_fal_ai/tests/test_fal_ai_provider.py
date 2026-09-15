@@ -216,3 +216,77 @@ class TestFalAIProvider(TransactionCase):
 
         with self.assertRaisesRegex(UserError, "prompt"):
             self.provider._fal_ai_validate_inputs({"image_url": "x"}, model)
+
+    def _edit_model(self, name, required, properties):
+        return self.env["llm.model"].create({
+            "name": name,
+            "provider_id": self.provider.id,
+            "model_use": "generation",
+            "details": {
+                "input_schema": {
+                    "type": "object",
+                    "required": required,
+                    "properties": properties,
+                }
+            },
+        })
+
+    def test_several_images_fill_an_image_urls_model(self):
+        # Photo plus the person to add, as asked on smartacus 2026-09-15.
+        model = self._edit_model(
+            "alibaba/qwen-image-3/edit",
+            ["image_urls", "prompt"],
+            {"image_urls": {"type": "array"}, "prompt": {"type": "string"}},
+        )
+        resolved = self.provider._fal_ai_resolve_inputs(
+            {"image": ["https://x/photo.jpg", "https://x/elon.jpg"], "prompt": "add him"},
+            model,
+        )
+        self.assertEqual(resolved["image_urls"], ["https://x/photo.jpg", "https://x/elon.jpg"])
+        self.assertNotIn("image", resolved)
+        self.assertEqual(resolved["prompt"], "add him")
+
+    def test_single_image_and_reference_become_a_list(self):
+        model = self._edit_model(
+            "alibaba/qwen-image-3/edit",
+            ["image_urls", "prompt"],
+            {"image_urls": {"anyOf": [{"type": "array"}, {"type": "null"}]}, "prompt": {"type": "string"}},
+        )
+        resolved = self.provider._fal_ai_resolve_inputs(
+            {"image": "https://x/photo.jpg", "reference_image": "https://x/elon.jpg", "prompt": "p"},
+            model,
+        )
+        self.assertEqual(resolved["image_urls"], ["https://x/photo.jpg", "https://x/elon.jpg"])
+
+    def test_prompt_fills_an_instruction_model(self):
+        model = self._edit_model(
+            "bria/fibo-edit/add_object_by_text",
+            ["image_url", "instruction"],
+            {"image_url": {"type": "string"}, "instruction": {"type": "string"}},
+        )
+        resolved = self.provider._fal_ai_resolve_inputs(
+            {"image": "https://x/photo.jpg", "prompt": "add Elon Musk"}, model
+        )
+        self.assertEqual(resolved, {"image_url": "https://x/photo.jpg", "instruction": "add Elon Musk"})
+
+    def test_declared_fields_are_never_moved(self):
+        model = self._edit_model(
+            "x/both",
+            ["prompt"],
+            {"prompt": {"type": "string"}, "instruction": {"type": "string"}},
+        )
+        resolved = self.provider._fal_ai_resolve_inputs({"prompt": "p"}, model)
+        self.assertEqual(resolved, {"prompt": "p"})
+
+    def test_missing_input_error_names_the_fields_the_model_takes(self):
+        model = self._edit_model(
+            "fal-ai/flux-pro/v1/fill",
+            ["image_url", "mask_url", "prompt"],
+            {"image_url": {}, "mask_url": {}, "prompt": {}, "seed": {}},
+        )
+        with self.assertRaisesRegex(UserError, "mask_url.*takes: image_url, mask_url, prompt, seed"):
+            self.provider._fal_ai_validate_inputs({"image_url": "x", "prompt": "p"}, model)
+
+    def test_input_schema_is_reachable_from_the_model(self):
+        model = self._edit_model("x/m", ["prompt"], {"prompt": {}})
+        self.assertEqual(model.generation_input_schema()["required"], ["prompt"])

@@ -1,4 +1,5 @@
 import logging
+import mimetypes
 
 from odoo import models
 
@@ -28,7 +29,7 @@ class MailMessage(models.Model):
                 attachments.append(attachment)
 
             # Generate markdown
-            content_type = url_data.get("content_type", "")
+            content_type = self._generation_mimetype(url_data)
             url = url_data["url"]
 
             if content_type.startswith("image/"):
@@ -54,8 +55,17 @@ class MailMessage(models.Model):
                 "name": url_data.get("filename", "generated_content"),
                 "type": "url",
                 "url": url_data["url"],
-                "mimetype": url_data.get("content_type", "application/octet-stream"),
+                "mimetype": self._generation_mimetype(url_data),
                 "res_model": "mail.message",
                 "res_id": self.id,
             }
         )
+
+    @staticmethod
+    def _generation_mimetype(url_data):
+        """Providers often omit the type or say octet-stream; the file extension knows."""
+        content_type = url_data.get("content_type") or ""
+        if content_type and not content_type.startswith("application/octet-stream"):
+            return content_type
+        name = url_data.get("filename") or url_data["url"].split("?")[0]
+        return mimetypes.guess_type(name)[0] or "application/octet-stream"

@@ -207,67 +207,91 @@ class LLMProvider(models.Model):
             _logger.error(f"Error in FAL AI stream: {e}")
             raise UserError(_(f"FAL AI streaming failed: {str(e)}")) from e
 
-    # Maps generic input key names (used by the AI assistant) to the fal.ai schema
-    # field variants tried in order. First match in the model's input schema wins.
-    _FAL_INPUT_FIELD_ALIASES = {
-        "image":        ["image_url", "image"],
-        "audio":        ["audio_url", "ref_audio_url", "audio"],
-        "video":        ["video_url", "video"],
-        "mask":         ["mask_url",  "mask"],
-        # Voice cloning / TTS models use ref_audio_url for the reference sample.
-        "voice_sample": ["ref_audio_url", "audio_url", "voice_sample"],
-        "ref_audio":    ["ref_audio_url", "audio_url", "ref_audio"],
+    # Schema field → generic keys the assistant may pass for it, in priority order.
+    # Edit models disagree on names (image_url / image_urls / instruction), so the
+    # schema decides; a key the schema already declares is never moved.
+    _FAL_INPUT_FIELD_SOURCES = {
+        "image_url": ["image", "image_urls", "images"],
+        "image_urls": [
+            "image", "images", "image_url",
+            "reference_image", "reference_image_url", "reference_images",
+        ],
+        "reference_image_url": ["reference_image", "reference_images"],
+        "reference_image_urls": ["reference_image", "reference_images", "reference_image_url"],
+        "audio_url": ["audio", "voice_sample", "ref_audio"],
+        "ref_audio_url": ["voice_sample", "ref_audio", "audio", "audio_url"],
+        "video_url": ["video"],
+        "mask_url": ["mask"],
+        "instruction": ["prompt"],
+        "prompt": ["instruction"],
     }
 
     def _fal_ai_resolve_inputs(self, inputs, model):
-        """Resolve attachment IDs → data URIs and map generic keys to schema field names.
-
-        The AI assistant passes inputs like {"image": <attachment_id>}. This method:
-        1. Looks up the ir.attachment record for any integer value.
-        2. Converts it to a data URI (data:<mimetype>;base64,...).
-        3. Renames the key to match the field name declared in the model's input schema
-           (e.g. "image" → "image_url" when "image_url" is in the schema).
-        """
+        """Resolve attachment IDs → data URIs, then fill the model's schema fields
+        from the generic keys the assistant used (e.g. "image" → "image_urls": [...])."""
         if not inputs or not isinstance(inputs, dict):
             return inputs
 
-        input_schema = self._fal_ai_get_input_schema(model)
-        schema_props = (input_schema or {}).get("properties", {})
+        resolved = {
+            key: self._fal_ai_resolve_attachment_value(value)
+            for key, value in inputs.items()
+        }
+        schema_props = (self._fal_ai_get_input_schema(model) or {}).get("properties", {})
+        if not schema_props:
+            return resolved
 
-        resolved = {}
-        for key, value in inputs.items():
-            # Resolve the target field name via schema aliases.
-            target_key = key
-            if key in self._FAL_INPUT_FIELD_ALIASES:
-                for candidate in self._FAL_INPUT_FIELD_ALIASES[key]:
-                    if candidate in schema_props:
-                        target_key = candidate
-                        break
-
-            # Resolve attachment references → data URI.
-            # Handles: integer 569, string "569", or string "attachment:569".
-            att_id = None
-            if isinstance(value, int) and value > 0:
-                att_id = value
-            elif isinstance(value, str):
-                raw = value.split(":", 1)[-1] if value.startswith("attachment:") else value
-                if raw.isdigit():
-                    att_id = int(raw)
-
-            if att_id:
-                att = self.env["ir.attachment"].sudo().browse(att_id)
-                if att.exists() and att.datas:
-                    mimetype = att.mimetype or "application/octet-stream"
-                    resolved[target_key] = f"data:{mimetype};base64,{att.datas.decode()}"
-                    _logger.info(
-                        "fal_ai: resolved attachment %s (%s) → %s",
-                        att_id, mimetype, target_key,
-                    )
+        for field, sources in self._FAL_INPUT_FIELD_SOURCES.items():
+            if field not in schema_props or resolved.get(field) not in (None, "", []):
+                continue
+            values, used = [], []
+            for source in sources:
+                if source in schema_props or resolved.get(source) in (None, "", []):
                     continue
-
-            resolved[target_key] = value
-
+                value = resolved[source]
+                for item in value if isinstance(value, list) else [value]:
+                    if item not in values:
+                        values.append(item)
+                used.append(source)
+            if not values:
+                continue
+            is_array = self._fal_ai_is_array_field(schema_props[field])
+            resolved[field] = values if is_array else values[0]
+            for source in used:
+                resolved.pop(source, None)
+            _logger.info("fal_ai: filled input %s from %s", field, used)
         return resolved
+
+    def _fal_ai_resolve_attachment_value(self, value):
+        """An attachment reference (569, "569", "attachment:569", or a list) → data URI."""
+        if isinstance(value, list):
+            return [self._fal_ai_resolve_attachment_value(item) for item in value]
+        att_id = None
+        if isinstance(value, int) and not isinstance(value, bool) and value > 0:
+            att_id = value
+        elif isinstance(value, str):
+            raw = value.split(":", 1)[-1] if value.startswith("attachment:") else value
+            if raw.isdigit():
+                att_id = int(raw)
+        if not att_id:
+            return value
+        att = self.env["ir.attachment"].sudo().browse(att_id)
+        if not (att.exists() and att.datas):
+            return value
+        mimetype = att.mimetype or "application/octet-stream"
+        _logger.info("fal_ai: resolved attachment %s (%s)", att_id, mimetype)
+        return f"data:{mimetype};base64,{att.datas.decode()}"
+
+    @staticmethod
+    def _fal_ai_is_array_field(spec):
+        if spec.get("type") == "array":
+            return True
+        return any(
+            isinstance(option, dict) and option.get("type") == "array"
+            for option in spec.get("anyOf", [])
+        )
+
+    def fal_ai_get_input_schema(self, model):
+        return self._fal_ai_get_input_schema(model)
 
     def _fal_ai_get_input_schema(self, model):
         """Return the normalized input schema, falling back to OpenAPI refs."""
@@ -297,9 +321,17 @@ class LLMProvider(models.Model):
         required = input_schema.get("required", []) if input_schema else []
         missing = [field for field in required if inputs.get(field) in (None, "")]
         if missing:
+            # Name every field so the assistant's retry uses the right ones.
             raise UserError(
-                _("Missing required generation input(s): %s")
-                % ", ".join(sorted(missing))
+                _(
+                    "Missing required generation input(s): %(missing)s. "
+                    "This model takes: %(fields)s (required: %(required)s)."
+                )
+                % {
+                    "missing": ", ".join(sorted(missing)),
+                    "fields": ", ".join(sorted(input_schema.get("properties", {}))) or "-",
+                    "required": ", ".join(sorted(required)),
+                }
             )
 
     _FAL_MODELS_PER_FETCH = 200  # max models per button click (20 pages × 10)

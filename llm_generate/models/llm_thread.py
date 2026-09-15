@@ -11,6 +11,9 @@ _logger = logging.getLogger(__name__)
 class LLMThread(models.Model):
     _inherit = "llm.thread"
 
+    def _on_generated_media_delivered(self, attachment):
+        """Seam: a channel calls this once generated media reached the contact."""
+
     def get_input_schema(self):
         """Get input schema for generation forms."""
         self.ensure_one()

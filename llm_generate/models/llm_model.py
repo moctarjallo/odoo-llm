@@ -20,6 +20,17 @@ class LLMModel(models.Model):
             self._auto_generate_io_schema()
         return result
 
+    def generation_input_schema(self):
+        """The model's generation input JSON schema, from its details or its provider."""
+        self.ensure_one()
+        schema = (self.details or {}).get("input_schema")
+        if schema:
+            return schema
+        provider = self.provider_id
+        if provider.service and hasattr(provider, f"{provider.service}_get_input_schema"):
+            return provider._dispatch("get_input_schema", self) or {}
+        return {}
+
     def _auto_generate_io_schema(self):
         """Auto-generate I/O schemas for eligible generation models.
 
