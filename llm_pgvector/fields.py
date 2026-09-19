@@ -32,17 +32,27 @@ class PgVector(fields.Field):
         super().__init__(string=string, dimension=dimension, **kwargs)
 
     def convert_to_column(self, value, record, values=None, validate=True):
-        """Convert Python value to database format using pgvector.Vector."""
+        """Convert Python value to pgvector's text format, e.g. "[0.1,0.2]"."""
         if value is None:
             return None
 
-        # Ensure the value is properly formatted for pgvector
+        # Built by hand rather than via Vector._to_db: pgvector 0.5 dropped that
+        # method's dimension argument, which silently turned every write into NULL.
         try:
-            # Use Vector._to_db method from pgvector
-            return Vector._to_db(value, self.dimension)
+            if isinstance(value, Vector):
+                value = value.to_list()
+            elif isinstance(value, np.ndarray):
+                value = value.tolist()
+            floats = [float(v) for v in value]
         except (ValueError, TypeError) as e:
             _logger.warning(f"Error converting vector: {e}. Returning NULL.")
             return None
+        if self.dimension and len(floats) != self.dimension:
+            _logger.warning(
+                f"Vector has {len(floats)} dimensions, expected {self.dimension}. Returning NULL."
+            )
+            return None
+        return "[" + ",".join(str(f) for f in floats) + "]"
 
     def convert_to_cache(self, value, record, validate=True):
         """Convert database value to cache format."""
