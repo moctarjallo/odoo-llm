@@ -63,6 +63,7 @@ class LLMThread(models.Model):
                 model=model,
                 attachment_ids=attachments.ids,
                 target_language=self._get_auto_transcription_language(),
+                keep_original=self._auto_transcription_keeps_original(),
             )
             body = self._format_auto_transcripts(results)
             if body:
@@ -81,6 +82,14 @@ class LLMThread(models.Model):
         """
         assistant = getattr(self, "assistant_id", None)
         return assistant.transcription_language if assistant else None
+
+    def _auto_transcription_keeps_original(self):
+        """Whether a translated voice note also records the words as spoken
+        (a second transcription call). Override to False on threads whose
+        readers only ever see the translation — see _format_auto_transcripts
+        for the matching presentation hook.
+        """
+        return True
 
     def _get_auto_transcription_model(self):
         """The transcription model to use: the default one, else any active one."""

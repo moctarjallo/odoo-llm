@@ -20,8 +20,13 @@ class IrAttachment(models.Model):
         prompt: str | None = None,
         language: str | None = None,
         target_language: str | None = None,
+        keep_original: bool = True,
     ) -> list[dict[str, Any]]:
-        """Transcribe multiple audio attachments with the selected model."""
+        """Transcribe multiple audio attachments with the selected model.
+
+        keep_original: when translating, also transcribe the words as spoken
+        (a second provider call) into `original_transcript`.
+        """
         model = self._get_transcription_model(model)
 
         results = []
@@ -40,6 +45,7 @@ class IrAttachment(models.Model):
                         prompt=prompt,
                         language=language,
                         target_language=target_language,
+                        keep_original=keep_original,
                     )
                 )
             except Exception as exc:
@@ -66,7 +72,8 @@ class IrAttachment(models.Model):
         return model
 
     def _transcribe_attachment(
-        self, attachment, model, prompt=None, language=None, target_language=None
+        self, attachment, model, prompt=None, language=None, target_language=None,
+        keep_original=True,
     ):
         mimetype = attachment.mimetype
         normalized_mimetype = (mimetype or "").split(";", 1)[0].strip().lower()
@@ -105,22 +112,24 @@ class IrAttachment(models.Model):
                 "model": model.name,
             }
             # A translation carries no trace of what was said; keep the words as
-            # spoken so the assistant can tell which language the customer used.
-            try:
-                original = model.transcribe_audio(
-                    data=audio_bytes,
-                    filename=filename,
-                    mimetype=normalized_mimetype,
-                    prompt=prompt,
-                    language=language,
-                )
-                transcript["original_text"] = (original.get("text") or "").strip()
-            except Exception:
-                _logger.warning(
-                    "Transcribing '%s' as spoken failed; keeping the translation only.",
-                    attachment.name,
-                    exc_info=True,
-                )
+            # spoken so the assistant can tell which language the customer used
+            # — unless the caller never shows them (keep_original=False).
+            if keep_original:
+                try:
+                    original = model.transcribe_audio(
+                        data=audio_bytes,
+                        filename=filename,
+                        mimetype=normalized_mimetype,
+                        prompt=prompt,
+                        language=language,
+                    )
+                    transcript["original_text"] = (original.get("text") or "").strip()
+                except Exception:
+                    _logger.warning(
+                        "Transcribing '%s' as spoken failed; keeping the translation only.",
+                        attachment.name,
+                        exc_info=True,
+                    )
         else:
             if target_language:
                 _logger.warning(

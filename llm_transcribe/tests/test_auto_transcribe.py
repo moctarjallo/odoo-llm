@@ -76,6 +76,21 @@ class TestAutoTranscribe(TransactionCase):
         self.assertNotIn("<p>", rendered)
         self.assertNotIn("&lt;", message.body)
 
+    def test_keeps_original_hook_reaches_transcribe_attachments(self):
+        att = self._audio_attachment()
+        with patch.object(
+            type(self.env["ir.attachment"]),
+            "transcribe_attachments",
+            return_value=[{"attachment_name": "note.wav", "transcript": "Jàmm rekk."}],
+        ) as transcribe:
+            self._post("listen", att)
+            self.assertTrue(transcribe.call_args.kwargs["keep_original"])
+            with patch.object(
+                type(self.thread), "_auto_transcription_keeps_original", return_value=False
+            ):
+                self._post("listen", att)
+            self.assertFalse(transcribe.call_args.kwargs["keep_original"])
+
     def test_transcript_html_is_escaped_not_injected(self):
         att = self._audio_attachment()
         with patch.object(
