@@ -435,34 +435,31 @@ class LLMSkillsLoader(models.Model):
         Called by Odoo on every server start and module upgrade.
         Auto-discovers skills/ directories and triggers sync for all loaders.
 
-        Uses a transaction-scoped advisory lock so only one worker process runs
-        the boot sync. Other workers skip silently — they share the same DB state
-        so the single sync covers everyone.
+        Runs in its own transaction, under an advisory lock so only one process
+        syncs at a time. Not the registry's: that one is REPEATABLE READ and
+        began before any other process's sync committed, so writing the same
+        rows in it failed with a serialization error even one process after
+        another -- and rolling it back failed the registry load itself.
         """
         super()._register_hook()
-        self._auto_discover_skill_loaders()
-
-        # Only one worker should run the boot sync. Without this, concurrent
-        # workers race to UPDATE the same llm_skills_loader rows, causing a
-        # PostgreSQL serialization error that aborts the transaction and fails
-        # registry loading.
-        self.env.cr.execute("SELECT pg_try_advisory_xact_lock(853271649)")
-        if not self.env.cr.fetchone()[0]:
-            _logger.debug("llm_skills: boot sync skipped (another worker holds the lock)")
-            return
-
-        loaders = self.search([("auto_sync_on_boot", "=", True)])
-        for loader in loaders:
-            try:
-                loader._sync_skills()
-            except Exception:
-                _logger.exception(
-                    "llm_skills: failed to sync loader '%s' on boot", loader.name
-                )
+        with self.pool.cursor() as cr:
+            cr.execute("SELECT pg_try_advisory_xact_lock(853271649)")
+            if not cr.fetchone()[0]:
+                _logger.debug("llm_skills: boot sync skipped (another process holds the lock)")
+                return
+            env = api.Environment(cr, self.env.uid, self.env.context)
+            Loader = env[self._name]
+            Loader._auto_discover_skill_loaders()
+            for loader in Loader.search([("auto_sync_on_boot", "=", True)]):
+                # Not a savepoint: embedding commits per batch, which ends it.
+                # Rolling back is safe here -- this cursor is the sync's alone.
                 try:
-                    self.env.cr.rollback()
+                    loader._sync_skills()
                 except Exception:
-                    pass
+                    _logger.exception(
+                        "llm_skills: failed to sync loader '%s' on boot", loader.name
+                    )
+                    cr.rollback()
 
     @api.model
     def _auto_discover_skill_loaders(self):
