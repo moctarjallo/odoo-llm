@@ -245,6 +245,8 @@ class LLMProvider(models.Model):
         with stream_ctx as stream:
             tool_calls = {}
             current_thinking = ""
+            stop_reason = None
+            dropped_tool_call = False
 
             for event in stream:
                 if event.type == "content_block_start":
@@ -267,6 +269,9 @@ class LLMProvider(models.Model):
                         if event.index in tool_calls:
                             tool_calls[event.index]["input"] += event.delta.partial_json
 
+                elif event.type == "message_delta":
+                    stop_reason = getattr(event.delta, "stop_reason", None) or stop_reason
+
                 elif event.type == "content_block_stop":
                     if event.index in tool_calls:
                         tc = tool_calls[event.index]
@@ -275,7 +280,11 @@ class LLMProvider(models.Model):
                                 json.loads(tc["input"]) if tc["input"] else {}
                             )
                         except json.JSONDecodeError:
-                            parsed_input = {}
+                            # Arguments cut off mid-way: running the tool with
+                            # {} would fail or, worse, do the wrong thing.
+                            dropped_tool_call = True
+                            del tool_calls[event.index]
+                            continue
 
                         yield {
                             "tool_calls": [
@@ -290,6 +299,16 @@ class LLMProvider(models.Model):
                             ],
                         }
                         del tool_calls[event.index]
+
+            # Without this a reply that hit the output limit just stops, and a
+            # tool call cut off with it disappears without a trace.
+            if stop_reason == "max_tokens" or dropped_tool_call:
+                yield {
+                    "error": _(
+                        "The response was cut off (max_tokens: %s) before it was complete.",
+                        params["max_tokens"],
+                    ),
+                }
 
     def anthropic_format_tools(self, tools):
         """Format tools for Anthropic API.
