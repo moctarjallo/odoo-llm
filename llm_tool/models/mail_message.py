@@ -87,11 +87,14 @@ class MailMessage(models.Model):
                 }
             )
 
-    def execute_tool_call(self, thread_model=None):
+    def execute_tool_call(self, thread_model=None, tool_call=None):
         """Execute a tool call for this message and update it with the result.
 
         Args:
             thread_model (recordset): The thread model that owns this message
+            tool_call (dict): The call as the model sent it. The stored copy
+                has long strings cut (_MAX_TOOL_CONTEXT_STRING), so arguments
+                must not be read back from it when the original is at hand.
 
         Yields:
             dict: Status updates for streaming
@@ -115,13 +118,17 @@ class MailMessage(models.Model):
             )
             return self
 
-        tool_call_def = tool_data.get("tool_call")
+        tool_call_def = tool_call or tool_data.get("tool_call")
         if not tool_call_def:
             raise UserError("No tool call definition found in message")
 
         fn = tool_call_def.get("function", {})
         name = fn.get("name", "unknown_tool")
         args = fn.get("arguments")
+        try:
+            parsed_args = self._parse_tool_arguments(args) if args else {}
+        except UserError:
+            parsed_args = {}
 
         # Emit tool_called event
         yield {
@@ -129,7 +136,7 @@ class MailMessage(models.Model):
             "tool_data": {
                 "tool_call_id": tool_data.get("tool_call_id"),
                 "tool_name": name,
-                "arguments": self._parse_tool_arguments(args) if args else {},
+                "arguments": parsed_args,
                 "status": "executing",
             },
         }
@@ -159,7 +166,7 @@ class MailMessage(models.Model):
                     "tool_data": {
                         "tool_call_id": tool_data.get("tool_call_id"),
                         "tool_name": name,
-                        "arguments": self._parse_tool_arguments(args) if args else {},
+                        "arguments": parsed_args,
                         "status": "completed",
                         "result": tool_data["result"],
                     },
@@ -179,7 +186,7 @@ class MailMessage(models.Model):
                 "tool_data": {
                     "tool_call_id": tool_data.get("tool_call_id"),
                     "tool_name": name,
-                    "arguments": self._parse_tool_arguments(args) if args else {},
+                    "arguments": parsed_args,
                     "status": "error",
                     "error": tool_data["error"],
                 },

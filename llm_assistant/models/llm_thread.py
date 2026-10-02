@@ -413,6 +413,18 @@ class LLMThread(models.Model):
         if not messages:
             return messages
 
+        # One tool_result per tool_use: a thread that recorded two (an older
+        # bug) would otherwise fail on every turn. The last one is the outcome.
+        last_result = {}
+        for msg in messages:
+            if msg.llm_role == "tool" and (msg.body_json or {}).get("tool_call_id"):
+                last_result[msg.body_json["tool_call_id"]] = msg.id
+        messages = messages.filtered(
+            lambda m: m.llm_role != "tool"
+            or not (m.body_json or {}).get("tool_call_id")
+            or last_result[m.body_json["tool_call_id"]] == m.id
+        )
+
         # Build set of tool_use IDs present in assistant messages within window
         tool_use_ids_in_window = set()
         for msg in messages:
@@ -650,6 +662,7 @@ class LLMThread(models.Model):
         Returns:
             mail.message: The tool message with execution result
         """
+        tool_msg = None
         try:
             # Create tool message using the post_tool_call method
             tool_msg = self.env["mail.message"].post_tool_call(
@@ -659,19 +672,25 @@ class LLMThread(models.Model):
             yield {"type": "message_create", "message": tool_msg.to_store_format()}
 
             # Execute the tool call
-            result_msg = yield from tool_msg.execute_tool_call(thread_model=self)
+            result_msg = yield from tool_msg.execute_tool_call(thread_model=self, tool_call=tool_call)
             return result_msg
 
         except Exception as e:
             _logger.error(f"Error executing tool call: {e}")
 
-            # Create error tool message using the new method
+            # One result per tool call: Anthropic rejects a second tool_result
+            # for the same id, and the thread would fail on every turn after.
             try:
-                error_msg = self.env["mail.message"].create_tool_error_message(
-                    tool_call,
-                    str(e),
-                    thread_model=self,
-                )
+                if tool_msg:
+                    tool_data = dict(tool_msg.body_json or {}, status="error", error=str(e))
+                    tool_msg.write({"body_json": tool_msg._sanitize_tool_context_payload(tool_data)})
+                    error_msg = tool_msg
+                else:
+                    error_msg = self.env["mail.message"].create_tool_error_message(
+                        tool_call,
+                        str(e),
+                        thread_model=self,
+                    )
                 yield {
                     "type": "message_create",
                     "message": error_msg.to_store_format(),
