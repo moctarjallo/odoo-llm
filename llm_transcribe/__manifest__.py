@@ -7,7 +7,7 @@
         that mirrors odoo_generate but targets speech-to-text workflows.
     """,
     "category": "Technical/AI",
-    "version": "18.0.2.2.0",
+    "version": "18.0.2.3.0",
     "depends": [
         "llm",
         "llm_thread",

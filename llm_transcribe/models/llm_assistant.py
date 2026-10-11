@@ -14,3 +14,15 @@ class LLMAssistant(models.Model):
             "work in a language it handles poorly."
         ),
     )
+
+    transcription_model_id = fields.Many2one(
+        "llm.model",
+        string="Voice Note Model",
+        domain=[("model_use", "=", "transcription")],
+        ondelete="set null",
+        help=(
+            "Transcription model for this assistant's voice notes. Leave empty to "
+            "use the default transcription model. Pick one that understands the "
+            "languages this assistant's contacts speak."
+        ),
+    )

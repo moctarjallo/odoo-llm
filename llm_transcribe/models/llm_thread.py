@@ -92,7 +92,10 @@ class LLMThread(models.Model):
         return True
 
     def _get_auto_transcription_model(self):
-        """The transcription model to use: the default one, else any active one."""
+        """The assistant's own transcription model, else the default one, else any active one."""
+        assistant = getattr(self, "assistant_id", None)
+        if assistant and assistant.transcription_model_id.active:
+            return assistant.transcription_model_id
         Model = self.env["llm.model"]
         domain = [("model_use", "=", "transcription"), ("active", "=", True)]
         return Model.search(domain + [("default", "=", True)], limit=1) or Model.search(

@@ -216,6 +216,16 @@ class TestAutoTranscribeLanguage(TransactionCase):
         self.assistant.transcription_language = "fr"
         self.assertEqual(self.thread._get_auto_transcription_language(), "fr")
 
+    def test_assistant_model_wins_over_the_default(self):
+        other = self.env["llm.model"].create(
+            {"name": "asr-own", "provider_id": self.provider.id, "model_use": "transcription"},
+        )
+        self.assertEqual(self.thread._get_auto_transcription_model(), self.asr)
+        self.assistant.transcription_model_id = other
+        self.assertEqual(self.thread._get_auto_transcription_model(), other)
+        other.active = False
+        self.assertEqual(self.thread._get_auto_transcription_model(), self.asr)
+
     def test_target_language_routes_to_speech_translation(self):
         self.assistant.transcription_language = "en"
         with (
