@@ -1,8 +1,8 @@
 import contextlib
 import json
 import logging
+import re
 
-import emoji
 import markdown2
 from markupsafe import Markup
 from psycopg2 import OperationalError
@@ -11,6 +11,13 @@ from odoo import _, api, fields, models
 from odoo.exceptions import UserError
 
 _logger = logging.getLogger(__name__)
+
+# markdown2's "task_list" extra renders real <input type="checkbox"> elements,
+# which mail.message's HTML sanitizer strips outright (disallowed form tag) —
+# swapped for a plain checked/unchecked glyph, which survives sanitization.
+_TASK_LIST_CHECKBOX_RE = re.compile(
+    r'<input type="checkbox" class="task-list-item-checkbox"( checked)? disabled>'
+)
 
 
 class RelatedRecordProxy:
@@ -289,7 +296,12 @@ class LLMThread(models.Model):
         """
         if not body or isinstance(body, Markup):
             return body
-        return markdown2.markdown(emoji.demojize(body))
+        html = markdown2.markdown(
+            body, extras=["tables", "fenced-code-blocks", "task_list", "strike"]
+        )
+        return _TASK_LIST_CHECKBOX_RE.sub(
+            lambda m: "☑" if m.group(1) else "☐", html
+        )
 
     # ============================================================================
     # STREAMING MESSAGE CREATION
