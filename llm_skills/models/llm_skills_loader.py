@@ -442,6 +442,21 @@ class LLMSkillsLoader(models.Model):
         another -- and rolling it back failed the registry load itself.
         """
         super()._register_hook()
+        if self.pool.updated_modules:
+            # This load installed or upgraded modules, and its transaction holds
+            # their schema locks (res_users altered, say) until it commits. The
+            # sync's own cursor waited on them while the load waited on this
+            # hook: a deadlock Postgres cannot see (smartacus-prod, 2026-10-18).
+            # The servers that start after it sync.
+            _logger.info("llm_skills: boot sync left to the servers that start after this upgrade")
+            return
+        try:
+            self._boot_sync()
+        except Exception:
+            # Never worth failing the registry load over.
+            _logger.exception("llm_skills: boot sync failed")
+
+    def _boot_sync(self):
         with self.pool.cursor() as cr:
             cr.execute("SELECT pg_try_advisory_xact_lock(853271649)")
             if not cr.fetchone()[0]:
