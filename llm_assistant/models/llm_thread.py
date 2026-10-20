@@ -497,10 +497,13 @@ class LLMThread(models.Model):
         """
         self.ensure_one()
 
+        # An error is not a turn: generating again (e.g. after a top-up) resumes from
+        # the message it failed on.
         domain = [
             ("model", "=", self._name),
             ("res_id", "=", self.id),
             ("llm_role", "!=", False),
+            ("is_error", "=", False),
         ]
 
         result = self.env["mail.message"].search(
