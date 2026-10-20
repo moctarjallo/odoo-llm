@@ -524,6 +524,19 @@ class LLMSkillsLoader(models.Model):
                 skills_path = str(skills_dir)
                 if skills_path in existing_paths or skills_path in existing_resolved:
                     continue
+                # A module moved to another addons dir: follow it, or its skills would load twice.
+                moved = existing_loaders.filtered(
+                    lambda l, m=module_name: Path(l.skills_path).parts[-2:] == (m, "skills")
+                    and not l._resolve_skills_path()
+                )[:1]
+                if moved:
+                    _logger.info(
+                        "llm_skills: loader '%s' moved from '%s' to '%s'",
+                        moved.name, moved.skills_path, skills_path,
+                    )
+                    moved.skills_path = skills_path
+                    existing_paths.add(skills_path)
+                    continue
                 loader = self.create({
                     "name": f"{module_name} Skills",
                     "collection_id": collection.id,

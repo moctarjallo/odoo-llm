@@ -12,7 +12,7 @@ class LlmThread(models.Model):
 
     All methods here are channel-independent. Channel modules (whatsapp_llm, …)
     override ``_queue_generation`` to enqueue work and feed inbound messages via
-    ``_on_user_message``. Business C-modules (crm_llm, sales_llm, …) override
+    ``_on_user_message``. Business C-modules (crm_llm, sale_llm, …) override
     ``_run_pipeline`` and call ``inject_event`` to report results back to the AI.
     """
 
