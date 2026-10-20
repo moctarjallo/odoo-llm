@@ -29,9 +29,10 @@ class ProductTemplate(models.Model):
             limit: Maximum number of products to return.
 
         Returns:
-            List of dicts: [{id, name, list_price, category, description}]
+            List of dicts: [{id, name, list_price, category, description, shop}]
         """
-        products = self.search([("sale_ok", "=", True), ("active", "=", True)])
+        # Every company's saleable products: one assistant can sell for several shops.
+        products = self.sudo().search([("sale_ok", "=", True), ("active", "=", True)])
         if not products:
             return []
 
@@ -69,6 +70,7 @@ class ProductTemplate(models.Model):
                 "list_price": p.list_price,
                 "category": p.categ_id.name,
                 "description": p.description_sale or "",
+                "shop": p.company_id.name or "",
             }
             for p in matched[:limit]
         ]
