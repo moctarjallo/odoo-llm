@@ -92,6 +92,7 @@
                 name="prompt_id"
                 options="{'no_create': False, 'no_open': False}"
               />
+                            <field name="handoff_assistant_ids" widget="many2many_tags" options="{'no_create': True}"/>
                             <field name="category_id" readonly="1" />
                             <field
                 name="tag_ids"

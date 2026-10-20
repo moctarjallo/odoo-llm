@@ -32,6 +32,9 @@ On ``llm.assistant``:
         "llm_thread",
         "llm_assistant",
     ],
+    "data": [
+        "security/ir.model.access.csv",
+    ],
     "author": "Ordomatics",
     "license": "LGPL-3",
     "installable": True,

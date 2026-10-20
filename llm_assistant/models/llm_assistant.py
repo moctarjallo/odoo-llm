@@ -64,6 +64,15 @@ class LLMAssistant(models.Model):
         index=True,
     )
 
+    handoff_assistant_ids = fields.Many2many(
+        "llm.assistant",
+        "llm_assistant_handoff_rel",
+        "source_assistant_id",
+        "target_assistant_id",
+        string="Handoff Assistants",
+        help="Assistants this assistant is allowed to hand a conversation to.",
+    )
+
     res_model = fields.Char(
         string="Related Model",
         help="Model that this assistant is associated with (e.g., fleek.character)",

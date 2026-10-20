@@ -56,6 +56,14 @@ class LlmThread(models.Model):
         self._queue_generation()
         return message
 
+    def _llm_event_assistant(self):
+        """Return an assistant to use before generating a backend event reply."""
+        return self.env["llm.assistant"]
+
+    def _handoff_target_allowed(self, target):
+        """Channel hook for validating a handoff target beyond the allowlist."""
+        return True
+
     def _queue_generation(self):
         """Run a generation pass. Synchronous by default; channel modules override
         to enqueue via queue_job (e.g. whatsapp channel)."""
