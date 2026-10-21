@@ -67,6 +67,18 @@ class TestLLMHandoff(TransactionCase):
             self.thread._prepare_chat_kwargs([], False)["tools"], self.sales.tool_ids,
         )
 
+    def test_current_tool_message_is_not_counted_as_prior_handoff(self):
+        current_tool = self.thread.message_post(
+            body="Executing llm_hand_off",
+            llm_role="tool",
+            body_json={"tool_name": "llm_hand_off"},
+        )
+        result = self.env["llm.handoff.tools"].with_context(
+            message=current_tool,
+        ).llm_hand_off("sales_test", "customer requested sales help")
+        self.assertTrue(result["success"], result)
+        self.assertEqual(self.thread.assistant_id, self.sales)
+
     def test_refused_target_and_self_target(self):
         self.assertFalse(self._call("other_test")["success"])
         self.assertFalse(self._call("owner_test")["success"])

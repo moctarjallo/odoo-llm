@@ -43,6 +43,10 @@ class LLMHandoffTools(models.TransientModel):
             ("res_id", "=", thread.id),
             ("llm_role", "=", "tool"),
             ("id", ">", last_user.id),
+            # The tool executor passes the current tool message in context.
+            # Exclude it: otherwise the handoff call sees its own pending
+            # tool message and rejects the first handoff of every turn.
+            ("id", "!=", message.id),
         ])
         if prior_handoffs.filtered(
             lambda tool: (tool.body_json or {}).get("tool_name") == "llm_hand_off"
