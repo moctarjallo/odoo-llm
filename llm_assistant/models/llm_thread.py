@@ -511,6 +511,9 @@ class LLMThread(models.Model):
             order="create_date DESC, write_date DESC, id DESC",
             limit=1,
         )
+        # Keep the invariant explicit even when a deployment has stale search
+        # metadata or an extension alters the mail-message query behavior.
+        result = result.filtered(lambda message: not message.is_error)
 
         if not result:
             raise UserError("No LLM messages found in this thread.")
