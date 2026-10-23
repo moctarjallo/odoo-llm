@@ -11,6 +11,8 @@ the conversational AI substrate (llm.thread), without knowing about any specific
 channel (WhatsApp, email, …).
 
 On ``llm.thread``:
+  * ``record_event(body)``     — record a backend result as a synthetic user
+                                 turn without triggering generation.
   * ``inject_event(body)``     — hand a backend business result to the AI as a
                                  synthetic user turn, then trigger generation.
   * ``_on_user_message(msg)``  — channel layers call this after each inbound turn;

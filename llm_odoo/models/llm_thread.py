@@ -37,13 +37,12 @@ class LlmThread(models.Model):
     # Event injection (M/C → conversational AI)
     # -------------------------------------------------------------------------
 
-    def inject_event(self, body):
-        """Hand a backend business result to the conversational AI.
+    def record_event(self, body):
+        """Record a backend result in the AI context without generating.
 
-        Posts ``body`` as a synthetic ``llm_role='user'`` turn (so only the AI
-        sees it — it never appears as an outbound channel message), then triggers
-        a generation pass so the assistant composes the customer-facing reply in
-        its own voice.
+        This is useful when a channel has already delivered a transactional
+        notification directly and the assistant still needs the fact in its
+        later transcript. It does not call an LLM or consume credits.
         """
         self.ensure_one()
         message = self.with_context(mail_create_nosubscribe=True).message_post(
@@ -53,6 +52,17 @@ class LlmThread(models.Model):
             author_id=self.env.ref("base.user_root").partner_id.id,
         )
         message.sudo().write({"llm_role": "user"})
+        return message
+
+    def inject_event(self, body):
+        """Hand a backend business result to the conversational AI.
+
+        Posts ``body`` as a synthetic ``llm_role='user'`` turn (so only the AI
+        sees it — it never appears as an outbound channel message), then triggers
+        a generation pass so the assistant composes the customer-facing reply in
+        its own voice.
+        """
+        message = self.record_event(body)
         self._queue_generation()
         return message
 

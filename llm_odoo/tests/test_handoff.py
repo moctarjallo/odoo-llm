@@ -106,3 +106,10 @@ class TestLLMHandoff(TransactionCase):
         # handback path explicitly without invoking generation.
         self.thread.set_assistant(self.owner.id)
         self.assertTrue(self._call()["success"])
+
+    def test_record_event_updates_context_without_generation(self):
+        before = len(self.thread.message_ids)
+        event = self.thread.record_event("[Queue notification sent] Position 2")
+        self.assertEqual(len(self.thread.message_ids), before + 1)
+        self.assertEqual(event.llm_role, "user")
+        self.assertIn("Queue notification sent", event.body)
